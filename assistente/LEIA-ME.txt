@@ -1,0 +1,27 @@
+ASSISTENTE DO AZULEJO (bookmarklet)
+===================================
+
+assistente.js     código-fonte legível
+empacotar.py      gera bookmarklet.txt a partir de assistente.js
+bookmarklet.txt   o mesmo código empacotado como endereço "javascript:" para
+                  colar num favorito do navegador
+
+Como usar
+1. Copie o conteúdo inteiro de bookmarklet.txt (também dá para colar o código
+   no console do navegador com o jogo aberto, se preferir não criar favorito).
+2. Crie um favorito em qualquer página e edite-o: no campo de endereço, apague
+   tudo e cole o código. Dê um nome, ex.: "Assistente Azulejo".
+3. Abra o jogo no navegador (não no app instalado), comece uma partida e toque
+   no favorito. Aparece um painel no canto com:
+   - a melhor próxima tentativa (maior informação esperada, em bits)
+   - as palavras ainda possíveis, ordenadas por frequência, com a chance de cada
+   - um botão "Jogar" que digita a palavra no jogo por você
+   O painel atualiza sozinho a cada tentativa. Toque no favorito de novo para fechar.
+
+O que ele lê
+- localStorage "az-cur": tentativas feitas e as cores devolvidas pelo jogo
+- a lista de palavras embutida na página (<script id="words">)
+Ele nunca lê nem mostra a palavra secreta.
+
+Para regenerar bookmarklet.txt depois de editar assistente.js:
+  python3 assistente/empacotar.py
