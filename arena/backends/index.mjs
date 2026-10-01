@@ -1,6 +1,8 @@
 // Contrato comum dos backends.
-// Cada backend exporta create(opts) -> { name, model, choose(ctx) }, onde
-// choose devolve { id, tokensIn, tokensOut, motivo, raw } ou lança erro.
+// Cada backend exporta create(opts) -> { name, model, choose(ctx) }; opts pode
+// trazer { model, baseUrl, apiKey } (a página do navegador usa isso) e, no que
+// faltar, vale o ambiente (OLLAMA_URL, TYPESAFE_URL, TYPESAFE_API_KEY). choose
+// devolve { id, tokensIn, tokensOut, motivo, raw } ou lança erro.
 // pick() mede a latência, valida a escolha e, se algo falhar, cai na escolha
 // do código (ctx.codeChoice) marcando a jogada como inválida.
 
@@ -30,13 +32,17 @@ export async function pick(backend, ctx) {
   };
 }
 
+// Variáveis de ambiente quando roda no Node; no navegador não há process.
+export const env = globalThis.process?.env ?? {};
+
 // fetch com tempo limite (ARENA_TIMEOUT_MS, padrão 120 s).
+// Funciona no Node e no navegador (sem imports do Node).
 export async function postJson(url, body, headers = {}) {
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...headers },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(Number(process.env.ARENA_TIMEOUT_MS) || 120000),
+    signal: AbortSignal.timeout(Number(env.ARENA_TIMEOUT_MS) || 120000),
   });
   const text = await res.text();
   let json = null;

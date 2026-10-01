@@ -11,11 +11,17 @@ descrita em palavras. Mede-se a latência e o acerto de cada jogada.
 
 ARQUIVOS
 --------
+index.html           página para assistir: dois agentes jogam lado a lado
+                     (duelo), com cronômetro, opções, registro e placar
+servir.mjs           servidor local da página (raiz do repositório) com
+                     proxies /ollama e /typesafe (sem CORS, chave no servidor)
 jogar.mjs            linha de comando: abre o jogo (Playwright), joga e mede
 solver.mjs           lógica pura: norm, score (igual ao jogo), buildList,
                      candidates, rankGuesses (entropia), describeOptions,
                      describeState
-backends/index.mjs   contrato comum: pick(backend, contexto)
+backends/index.mjs   contrato comum: pick(backend, contexto); funciona no Node
+                     e no navegador (create(opts) aceita baseUrl, apiKey e
+                     model; o que faltar vem das variáveis de ambiente)
 backends/code.mjs    linha de base: escolhe sempre a melhor opção do código
 backends/ollama.mjs  modelo local via Ollama (/api/chat)
 backends/jev.mjs     TypeSafe "System One" (o "Jev" do jev-tetris)
@@ -90,12 +96,71 @@ Testes com servidores falsos (provam o caminho de pedido e resposta):
   testar a queda para o código.
 
 
+ASSISTIR PELO NAVEGADOR
+-----------------------
+A página arena/index.html mostra um duelo, como o jev-tetris: dois agentes
+jogam ao mesmo tempo, lado a lado, com a MESMA palavra secreta em cada jogo.
+Cada lado tem o seu backend (Código, Ollama ou Jev; por padrão Jev à
+esquerda e Ollama qwen3.5:9b à direita); letras, variante, dificuldade,
+número de jogos, ritmo e opções por jogada valem para os dois. Cada lado
+mostra o jogo, um cronômetro "tempo desde o start" (começa no clique em
+Jogar e para durante as pausas de ritmo e entre as letras digitadas, que só
+servem para ver), a jogada, as palavras possíveis, a tabela de opções que o
+modelo vê, a escolha com motivo e latência, e o registro de jogadas. O placar
+mostra, por lado, vitórias, média de tentativas, tempo médio, latência média,
+respostas inválidas, concordância com o código e tokens, e os jogos vencidos
+no confronto (ganha quem acerta em menos tentativas; empate em tentativas
+desempata pelo menor tempo; se os dois falham, é empate). "Baixar JSONL"
+grava um jogo por linha com os dois lados em lados.esquerda e lados.direita,
+cada um no mesmo formato do jogar.mjs. Configuração (incluindo a chave) e
+resultados ficam no localStorage do navegador (arena-config, arena-duelos).
+
+Como os dois jogos rodam na mesma página: a página busca ../index.html uma
+vez e põe em cada iframe uma cópia via srcdoc (mesma origem, por isso a
+página digita e lê o estado), com um script injetado antes do jogo que troca
+o localStorage por um armazenamento em memória (os lados não se apagam e os
+dados do jogador real não são tocados) e o Math.random por um gerador com
+semente (mulberry32). A mesma semente nos dois lados faz o jogo sortear a
+mesma palavra; cada jogo usa uma semente nova.
+
+Rodar localmente (Node 20+, sem dependências):
+  node arena/servir.mjs                 (porta 8080; --porta N ou PORT=N)
+  abra http://localhost:8080/arena/
+
+O servidor serve a raiz do repositório e faz de proxy:
+  /ollama/*    -> OLLAMA_URL   (padrão http://localhost:11434)
+  /typesafe/*  -> TYPESAFE_URL (padrão https://api.typesafe.ai), acrescentando
+                  Authorization: Bearer $TYPESAFE_API_KEY se a variável existir
+                  e o pedido não trouxer chave
+  Ex.: TYPESAFE_API_KEY=sua-chave node arena/servir.mjs
+Aberta em localhost/127.0.0.1, a página já usa /ollama e /typesafe como
+URLs padrão; com o proxy não há CORS e a chave não precisa ir para a página.
+
+GitHub Pages: a mesma página funciona publicada em <site>/arena/ (o jogo
+fica em <site>/). Lá não há proxy, então as URLs padrão são as diretas:
+  - Ollama: inicie com OLLAMA_ORIGINS igual à origem do site (ou "*"), ex.:
+      OLLAMA_ORIGINS="https://datm83.github.io" ollama serve
+    (o navegador também pode bloquear http://localhost a partir de um site
+    https em alguns casos; aí use o servir.mjs localmente).
+  - TypeSafe: digite a chave no campo "Chave"; ela fica guardada só naquele
+    navegador (localStorage). Se a API não aceitar pedidos do navegador
+    (CORS), use o servir.mjs com a URL /typesafe.
+Se uma chamada falhar (rede, CORS, HTTP, id inválido), a jogada usa a escolha
+do código, conta como inválida e o erro aparece no registro, com uma dica
+quando parece CORS. Aberta como arquivo (file://) a página não funciona e
+avisa para usar o servir.mjs.
+
+A linha de comando (jogar.mjs) continua sendo o caminho para lotes grandes e
+para gravar resultados em arena/resultados.
+
+
 VARIÁVEIS DE AMBIENTE
 ---------------------
 OLLAMA_URL          base do Ollama (padrão http://localhost:11434)
 TYPESAFE_URL        base da API TypeSafe (padrão https://api.typesafe.ai)
 TYPESAFE_API_KEY    chave da TypeSafe (Authorization: Bearer ...)
 ARENA_TIMEOUT_MS    tempo limite de cada chamada ao modelo (padrão 120000)
+PORT                porta do servir.mjs (padrão 8080)
 ARENA_DEBUG=1       mostra no terminal o erro de cada jogada inválida
 PW_CHROMIUM         caminho do executável do Chromium
 PLAYWRIGHT_GLOBAL   caminho do pacote playwright, se não estiver em arena/node_modules

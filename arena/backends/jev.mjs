@@ -1,7 +1,7 @@
 // Backend TypeSafe "System One" (o "Jev" do jev-tetris).
 // Formato copiado de jev-tetris/public/jev.js; o host e o formato NÃO foram
 // verificados aqui (sem chave). Configure com TYPESAFE_URL e TYPESAFE_API_KEY.
-import { postJson } from './index.mjs';
+import { postJson, env } from './index.mjs';
 
 const RETRY = new Set([429, 529]);
 
@@ -30,19 +30,23 @@ export function buildRequest(ctx, model) {
   };
 }
 
-export function create({ model } = {}) {
-  const base = (process.env.TYPESAFE_URL || 'https://api.typesafe.ai').replace(/\/$/, '');
-  const key = process.env.TYPESAFE_API_KEY || '';
+// opts: { model, baseUrl, apiKey }. Com baseUrl relativo (ex.: /typesafe via
+// servir.mjs) a chave é opcional: o proxy acrescenta a dele.
+export function create({ model, baseUrl, apiKey } = {}) {
+  const base = (baseUrl || env.TYPESAFE_URL || 'https://api.typesafe.ai').replace(/\/$/, '');
+  const key = apiKey || env.TYPESAFE_API_KEY || '';
+  const viaProxy = base.startsWith('/');
   const name = model || 'jev-latest';
   return {
     name: 'jev',
     model: name,
     async choose(ctx) {
-      if (!key) throw new Error('TYPESAFE_API_KEY não definida');
+      if (!key && !viaProxy) throw new Error('TYPESAFE_API_KEY não definida');
       const body = buildRequest(ctx, name);
+      const auth = key ? { Authorization: `Bearer ${key}` } : {};
       let r, delay = 500;
       for (let attempt = 1; ; attempt++) {
-        r = await postJson(`${base}/v1/systemone`, body, { Authorization: `Bearer ${key}` });
+        r = await postJson(`${base}/v1/systemone`, body, auth);
         if (r.ok || !RETRY.has(r.status) || attempt >= 4) break;
         const ra = Number(r.headers.get('retry-after'));
         await new Promise(res => setTimeout(res, ra > 0 ? ra * 1000 : delay));

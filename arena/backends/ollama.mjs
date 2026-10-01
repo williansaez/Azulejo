@@ -1,5 +1,5 @@
 // Backend Ollama (/api/chat) com saída estruturada: o modelo só escolhe um id.
-import { postJson } from './index.mjs';
+import { postJson, env } from './index.mjs';
 
 const SYSTEM = `Você está jogando "Azulejo das Palavras", um jogo de adivinhar palavras em português parecido com o Wordle.
 A cada rodada você recebe o estado do jogo (tentativas já feitas e as cores de cada letra) e uma lista curta de opções de palavra, já calculadas por um programa que conhece o dicionário.
@@ -20,8 +20,9 @@ function userMessage(ctx) {
   return lines.join('\n');
 }
 
-export function create({ model } = {}) {
-  const base = (process.env.OLLAMA_URL || 'http://localhost:11434').replace(/\/$/, '');
+// opts: { model, baseUrl } (baseUrl pode ser relativo, ex.: /ollama via servir.mjs)
+export function create({ model, baseUrl } = {}) {
+  const base = (baseUrl || env.OLLAMA_URL || 'http://localhost:11434').replace(/\/$/, '');
   const name = model || 'qwen3.5:9b';
   return {
     name: 'ollama',

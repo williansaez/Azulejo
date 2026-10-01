@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Assista a dois agentes de IA jogarem o Azulejo das Palavras lado a lado, com a mesma palavra secreta, e compare acerto e tempo.">
+<link rel="icon" type="image/png" href="../icons/favicon.png">
+<title>Arena do Azulejo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600&display=swap">
+<style>
+/* Paleta copiada do jogo (../index.html) */
+:root{
+  --ground:#EEF1F6; --surface:#FFFFFF; --ink:#16223A; --muted:#5B6782; --line:#C9D1E0;
+  --cobalt:#1F4E9C; --cobalt-soft:#DCE5F4;
+  --ok:#2F8A57; --near:#C9901F; --off:#E9918C; --off-ink:#FFFFFF; --key:#DCE2EC; --key-ink:#16223A;
+  --tile-empty:#FFFFFF; --on-color:#FFFFFF;
+  --display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body:"Figtree", "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --ground:#0E1524; --surface:#16203A; --ink:#E8EDF7; --muted:#9AA6C0; --line:#2C3A5C;
+    --cobalt:#7FA6EC; --cobalt-soft:#1C2B4E;
+    --ok:#3FA56C; --near:#D6A232; --off:#D9807A; --off-ink:#FFFFFF; --key:#33406A; --key-ink:#E8EDF7;
+    --tile-empty:#121B30; --on-color:#FFFFFF;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --ground:#0E1524; --surface:#16203A; --ink:#E8EDF7; --muted:#9AA6C0; --line:#2C3A5C;
+  --cobalt:#7FA6EC; --cobalt-soft:#1C2B4E;
+  --ok:#3FA56C; --near:#D6A232; --off:#D9807A; --off-ink:#FFFFFF; --key:#33406A; --key-ink:#E8EDF7;
+  --tile-empty:#121B30; --on-color:#FFFFFF;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);font-size:14px;line-height:1.45;padding:16px}
+.wrap{max-width:1240px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+header h1{font:800 clamp(24px,5vw,32px)/1.05 var(--display);letter-spacing:-.02em;margin:0}
+header h1 span{color:var(--cobalt)}
+header p{margin:4px 0 0;color:var(--muted);max-width:80ch}
+.notice{background:var(--surface);border:1.5px solid var(--near);border-radius:10px;padding:10px 14px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.card h2{font:700 16px var(--display);margin:0;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.lbl{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:600}
+.form{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
+.form label{display:flex;flex-direction:column;gap:4px;min-width:0}
+input,select{font:500 14px var(--body);color:var(--ink);background:var(--tile-empty);border:1.5px solid var(--line);border-radius:8px;padding:7px 9px;width:100%;min-width:0}
+input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--cobalt);outline-offset:1px}
+.help{font-size:12px;color:var(--muted);margin:0}
+.btns{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.btn{font:600 14px var(--body);background:var(--cobalt);color:var(--on-color);border:0;border-radius:9px;padding:9px 16px;cursor:pointer}
+.btn.ghost{background:transparent;color:var(--cobalt);border:1.5px solid var(--cobalt);padding:7.5px 14px}
+.btn:disabled{opacity:.45;cursor:default}
+/* placar */
+.versus{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;text-align:center}
+.versus .who{font:700 15px var(--display)}
+.versus .who small{display:block;font:500 12px var(--body);color:var(--muted)}
+.versus .score{font:800 clamp(34px,6vw,48px)/1 var(--display);color:var(--cobalt);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;text-align:left;padding:4px 8px 6px 0;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:5px 8px 5px 0;border-bottom:1px solid var(--line);white-space:nowrap}
+td.n,th.n{text-align:right}
+.board{max-width:720px;margin:0 auto}
+.board td:first-child{color:var(--muted);white-space:normal}
+.board td.n{font-weight:600}
+/* lados */
+/* subgrid: config, jogo e painel de cada lado ficam alinhados entre os dois lados */
+.duel{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-flow:column;grid-template-rows:auto auto auto;gap:12px 16px;align-items:start}
+.side{display:grid;grid-row:span 3;grid-template-rows:subgrid;gap:12px;min-width:0}
+.side>.card{height:100%}
+.side-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.side-head h2{font:800 20px var(--display);margin:0}
+.badge{border-radius:999px;padding:2px 10px;font:700 12px var(--body);background:var(--key);color:var(--key-ink)}
+.badge.first{background:var(--ok);color:var(--on-color)}
+.frame{display:block;width:100%;max-width:440px;margin:0 auto;height:min(660px,calc(100vh - 32px));min-height:520px;border:1px solid var(--line);border-radius:18px;background:var(--ground);box-shadow:0 8px 28px rgba(22,34,58,.12)}
+.live{display:flex;flex-wrap:wrap;gap:8px 20px;align-items:flex-end}
+.clock{font:800 clamp(34px,5vw,46px)/1 var(--display);font-variant-numeric:tabular-nums;color:var(--cobalt);letter-spacing:-.02em}
+.facts{display:flex;gap:6px 18px;flex-wrap:wrap;font-variant-numeric:tabular-nums}
+.facts div{display:flex;flex-direction:column}
+.facts b{font:700 17px var(--display)}
+.state{font-size:13px;color:var(--muted);min-height:1.4em}
+.choice{border-left:3px solid var(--cobalt);background:var(--cobalt-soft);border-radius:6px;padding:7px 10px;font-size:13px}
+.choice b{font-family:var(--display);font-size:15px}
+td.w{font:700 14px var(--display);letter-spacing:.04em}
+tr.pick td{background:var(--cobalt-soft)}
+tr.pick td.w{color:var(--cobalt)}
+.tag{display:inline-block;border-radius:999px;padding:1px 8px;font:600 11px var(--body);background:var(--key);color:var(--key-ink)}
+.tag.ok{background:var(--ok);color:var(--on-color)} .tag.bad{background:var(--off);color:var(--off-ink)}
+.empty{color:var(--muted);font-size:13px;margin:0}
+.log{list-style:none;margin:0;padding:0;max-height:220px;overflow:auto;font-size:12.5px;display:flex;flex-direction:column;gap:3px;font-variant-numeric:tabular-nums}
+.log li{padding:3px 0;border-bottom:1px dashed var(--line)}
+.log li.err{color:var(--off)} .log li.hint{color:var(--near)} .log li.game{font-weight:600;color:var(--cobalt)}
+.minis{display:inline-flex;gap:2px;vertical-align:-1px;margin-right:4px}
+.minis i{width:10px;height:10px;border-radius:2px;background:var(--line)}
+.minis i.ok{background:var(--ok)} .minis i.near{background:var(--near)} .minis i.off{background:var(--off)}
+/* resultados */
+.games{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.games li{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:13px;font-variant-numeric:tabular-nums;border-bottom:1px solid var(--line);padding-bottom:8px}
+.games li.empty{display:block;border:0}
+.games .head{grid-column:1/-1;display:flex;gap:4px 12px;flex-wrap:wrap;align-items:baseline}
+.games .sec{font:700 14px var(--display);text-transform:uppercase;letter-spacing:.04em}
+.games .seq{color:var(--muted);overflow-wrap:anywhere}
+@media (max-width:900px){ .duel{grid-template-columns:minmax(0,1fr);grid-auto-flow:row;grid-template-rows:none} .side{grid-row:auto;grid-template-rows:none} }
+@media (max-width:420px){ body{padding:16px 12px} .card{padding:12px} .frame{min-height:480px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Arena do <span>Azulejo</span></h1>
+    <p>Dois agentes de IA jogam o Azulejo das Palavras lado a lado, com a mesma palavra secreta: o código calcula as opções, cada modelo escolhe uma, e o placar mede acerto, tentativas e tempo.</p>
+  </header>
+  <div class="notice" id="fileNotice" hidden>
+    Esta página precisa ser servida por http: aberta como arquivo (<code>file://</code>) o navegador bloqueia os módulos e o controle dos jogos.
+    Na raiz do repositório rode <code>node arena/servir.mjs</code> e abra <code>http://localhost:8080/arena/</code>.
+  </div>
+  <div class="notice" id="bootError" hidden></div>
+
+  <section class="card" aria-labelledby="hCfg">
+    <h2 id="hCfg">Regras do confronto</h2>
+    <form class="form" id="cfg" autocomplete="off" onsubmit="return false">
+      <label><span class="lbl">Letras</span><select data-c="len"><option>4</option><option>5</option><option>6</option></select></label>
+      <label><span class="lbl">Variante</span><select data-c="v"><option value="pt">Portugal</option><option value="br">Brasil</option></select></label>
+      <label><span class="lbl">Dificuldade</span><select data-c="tries"><option value="4">Difícil (4)</option><option value="6">Normal (6)</option><option value="10">Fácil (10)</option></select></label>
+      <label><span class="lbl">Número de jogos</span><input data-c="jogos" type="number" min="1" max="500"></label>
+      <label><span class="lbl">Ritmo (ms)</span><input data-c="ritmo" type="number" min="0" step="100"></label>
+      <label><span class="lbl">Opções por jogada</span><input data-c="k" type="number" min="2" max="20"></label>
+    </form>
+    <div class="btns">
+      <button class="btn" id="start" type="button">Começar</button>
+      <button class="btn ghost" id="stop" type="button" disabled>Parar</button>
+      <span class="help" id="runState">Escolha o backend de cada lado e clique em Começar.</span>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="hBoard">
+    <h2 id="hBoard">Placar</h2>
+    <div class="versus">
+      <div class="who" id="vsL">Esquerda</div>
+      <div><div class="score" id="vsScore">0 × 0</div><div class="help" id="vsDraws">jogos vencidos no confronto</div></div>
+      <div class="who" id="vsR">Direita</div>
+    </div>
+    <div class="tablewrap"><table class="board">
+      <thead><tr><th></th><th class="n">Esquerda</th><th class="n">Direita</th></tr></thead>
+      <tbody id="board"></tbody>
+    </table></div>
+    <p class="help">Ganha o jogo quem acerta em menos tentativas; com as mesmas tentativas, ganha o menor tempo; se os dois falham, é empate.</p>
+  </section>
+
+  <div class="duel" id="duel"><div id="slotL"></div><div id="slotR"></div></div>
+
+  <section class="card" aria-labelledby="hRes">
+    <h2 id="hRes">Jogos terminados
+      <span class="btns"><button class="btn ghost" id="dl" type="button" disabled>Baixar JSONL</button><button class="btn ghost" id="clear" type="button" disabled>Limpar</button></span></h2>
+    <ul class="games" id="games"><li class="empty">Nenhum jogo terminado ainda.</li></ul>
+  </section>
+</div>
+
+<template id="sideTpl">
+  <section class="side">
+    <div class="card">
+      <div class="side-head"><h2 data-k="title"></h2><span class="badge" data-k="badge" hidden></span></div>
+      <div class="form">
+        <label><span class="lbl">Backend</span><select data-k="backend"><option value="code">Código</option><option value="ollama">Ollama</option><option value="jev">Jev (TypeSafe)</option></select></label>
+        <label data-for="ollama"><span class="lbl">URL do Ollama</span><input data-k="ollamaUrl" placeholder="/ollama ou http://localhost:11434"></label>
+        <label data-for="ollama"><span class="lbl">Modelo</span><input data-k="ollamaModel" placeholder="qwen3.5:9b"></label>
+        <label data-for="jev"><span class="lbl">URL da TypeSafe</span><input data-k="jevUrl" placeholder="/typesafe ou https://api.typesafe.ai"></label>
+        <label data-for="jev"><span class="lbl">Chave</span><input data-k="jevKey" type="password" placeholder="opcional com /typesafe"></label>
+        <label data-for="jev"><span class="lbl">Modelo</span><input data-k="jevModel" placeholder="jev-latest"></label>
+      </div>
+      <p class="help" data-k="help"></p>
+    </div>
+    <iframe class="frame" data-k="frame" title="Azulejo das Palavras controlado pelo agente"></iframe>
+    <div class="card">
+      <div class="live">
+        <div><span class="lbl">Tempo desde o start</span><div class="clock" data-k="clock">00:00,0</div></div>
+        <div class="facts">
+          <div><span class="lbl">Jogada</span><b data-k="fMove">-</b></div>
+          <div><span class="lbl">Palavras possíveis</span><b data-k="fCands">-</b></div>
+          <div><span class="lbl">Latência</span><b data-k="fLat">-</b></div>
+        </div>
+      </div>
+      <div class="state" data-k="state">O cronômetro começa no clique em Jogar e para nas pausas de ritmo e de digitação.</div>
+      <div class="choice" data-k="choice" hidden></div>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Palavra</th><th>Pode ser a resposta</th><th>Frequência</th><th class="n">Bits</th><th>Restantes em média</th></tr></thead>
+        <tbody data-k="opts"><tr><td colspan="5" class="empty">As opções que o modelo vê aparecem aqui.</td></tr></tbody>
+      </table></div>
+      <span class="lbl">Registro de jogadas</span>
+      <ul class="log" data-k="log"><li class="empty">Nada ainda.</li></ul>
+    </div>
+  </section>
+</template>
+
+<script>
+// Script clássico: monta os dois lados e roda mesmo quando os módulos são bloqueados (file://).
+for (const [slot, title] of [['slotL', 'Esquerda'], ['slotR', 'Direita']]) {
+  const el = document.getElementById('sideTpl').content.cloneNode(true);
+  el.querySelector('[data-k="title"]').textContent = title;
+  document.getElementById(slot).replaceWith(Object.assign(el.firstElementChild, { id: slot }));
+}
+if (location.protocol === 'file:') {
+  document.getElementById('fileNotice').hidden = false;
+  document.getElementById('start').disabled = true;
+  document.getElementById('runState').textContent = 'Sirva a página por http para começar.';
+}
+addEventListener('error', e => {
+  if (location.protocol === 'file:' || !e.target || e.target.tagName !== 'SCRIPT') return;
+  const n = document.getElementById('bootError'); n.hidden = false;
+  n.textContent = 'Não foi possível carregar os módulos da arena. Sirva o repositório com node arena/servir.mjs.';
+  document.getElementById('start').disabled = true;
+}, true);
+</script>
+<script type="module">
+import { buildList, candidates, rankGuesses, describeOptions, describeState } from './solver.mjs';
+import { loadBackend, pick } from './backends/index.mjs';
+
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const fmt = (x, d = 0) => Number(x).toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
+const secs = ms => `${fmt(ms / 1000, 2)} s`;
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* sem armazenamento */ } },
+};
+const BACKEND_LABEL = { code: 'Código', ollama: 'Ollama', jev: 'Jev' };
+const SIDE_LABEL = { esquerda: 'Esquerda', direita: 'Direita' };
+const GAME_URL = new URL('../index.html', location.href).href;
+const ROOT_URL = new URL('../', location.href).href;
+
+// ---------- configuração (guardada em arena-config) ----------
+const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+const SIDE_DEFAULTS = {
+  ollamaUrl: LOCAL ? '/ollama' : 'http://localhost:11434', ollamaModel: 'qwen3.5:9b',
+  jevUrl: LOCAL ? '/typesafe' : 'https://api.typesafe.ai', jevKey: '', jevModel: 'jev-latest',
+};
+const DEFAULTS = {
+  len: '5', v: 'pt', tries: '6', jogos: '3', ritmo: '800', k: '8',
+  esquerda: { backend: 'jev', ...SIDE_DEFAULTS }, direita: { backend: 'ollama', ...SIDE_DEFAULTS },
+};
+const HELP = {
+  code: 'Linha de base sem rede: escolhe sempre a opção com maior informação esperada.',
+  ollama: 'URL "/ollama" usa o proxy do node arena/servir.mjs (sem CORS). Uma URL direta exige iniciar o Ollama com OLLAMA_ORIGINS igual à origem desta página (ou "*").',
+  jev: 'URL "/typesafe" usa o proxy do node arena/servir.mjs, que acrescenta TYPESAFE_API_KEY. A chave digitada aqui fica guardada só neste navegador.',
+};
+const cfgEls = [...document.querySelectorAll('[data-c]')];
+const saved = store.get('arena-config', {});
+for (const el of cfgEls) el.value = saved[el.dataset.c] ?? DEFAULTS[el.dataset.c];
+
+function readCfg() {
+  const c = Object.fromEntries(cfgEls.map(el => [el.dataset.c, el.value.trim()]));
+  for (const s of sides) c[s.name] = s.readCfg();
+  store.set('arena-config', c);
+  return {
+    ...c, len: Number(c.len), tries: Number(c.tries),
+    jogos: Math.max(1, parseInt(c.jogos, 10) || 1),
+    ritmo: Math.max(0, parseInt(c.ritmo, 10) || 0),
+    k: Math.max(2, parseInt(c.k, 10) || 8),
+  };
+}
+
+// ---------- o jogo de cada lado: index.html em srcdoc, com armazenamento em memória ----------
+// O jogo guarda o estado em localStorage; dois iframes normais da mesma origem
+// apagariam o estado um do outro. Cada lado recebe o HTML do jogo com um script
+// injetado que troca localStorage por um objeto em memória e Math.random por um
+// gerador com semente (mulberry32): a mesma semente nos dois lados dá a mesma
+// palavra secreta. O srcdoc continua com a mesma origem desta página.
+let gameHtml = null;
+function buildHtml(seed, prefs) {
+  const shim = `<base href="${ROOT_URL}"><script>(function(){
+  var data = new Map([['az-prefs2', ${JSON.stringify(JSON.stringify(prefs))}]]);
+  var mem = { getItem: function(k){ k = String(k); return data.has(k) ? data.get(k) : null; },
+    setItem: function(k, v){ data.set(String(k), String(v)); }, removeItem: function(k){ data.delete(String(k)); },
+    clear: function(){ data.clear(); }, key: function(i){ var ks = Array.from(data.keys()); return i < ks.length ? ks[i] : null; },
+    get length(){ return data.size; } };
+  Object.defineProperty(window, 'localStorage', { configurable: true, value: mem });
+  var a = ${seed >>> 0};
+  Math.random = function(){ a = (a + 0x6D2B79F5) | 0; var t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  try { Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: { register: function(){ return Promise.resolve(); } } }); } catch (e) {}
+})();<\/script>`;
+  return gameHtml.replace(/<head>/i, m => m + shim);
+}
+
+// ---------- cronômetro (desconta as pausas que só servem para ver) ----------
+function makeClock(el) {
+  const show = ms => { const d = Math.floor(ms / 100); el.textContent = `${String(Math.floor(d / 600)).padStart(2, '0')}:${String(Math.floor(d / 10) % 60).padStart(2, '0')},${d % 10}`; };
+  return {
+    t0: 0, paused: 0, pauseAt: null, timer: null,
+    start() { this.t0 = performance.now(); this.paused = 0; this.pauseAt = null; clearInterval(this.timer); this.timer = setInterval(() => show(this.elapsed()), 100); show(0); },
+    elapsed() { return this.t0 ? (this.pauseAt ?? performance.now()) - this.t0 - this.paused : 0; },
+    async pause(ms) { const t = performance.now(); this.pauseAt = t; await sleep(ms); this.paused += performance.now() - t; this.pauseAt = null; },
+    stop() { const ms = Math.round(this.elapsed()); clearInterval(this.timer); this.timer = null; this.t0 = 0; show(ms); return ms; },
+  };
+}
+
+// ---------- solver: lista e primeira jogada em cache, calculadas antes dos relógios ----------
+const lists = new Map(), openers = new Map();
+function getEntries(W, v, len) {
+  const id = v + len;
+  if (!lists.has(id)) lists.set(id, buildList(W.secret[v][String(len)].split(' ')));
+  if (!openers.has(id)) openers.set(id, rankGuesses(lists.get(id), lists.get(id)));
+  return lists.get(id);
+}
+
+async function waitFor(fn, ms = 10000, every = 100) {
+  const end = performance.now() + ms;
+  for (;;) {
+    const v = fn();
+    if (v) return v;
+    if (performance.now() > end) return null;
+    await sleep(every);
+  }
+}
+function minis(res) {
+  const span = document.createElement('span'); span.className = 'minis';
+  span.setAttribute('aria-label', res.map(x => ({ ok: 'certa', near: 'noutro lugar', off: 'não existe' }[x])).join(', '));
+  for (const x of res) { const i = document.createElement('i'); i.className = x; span.appendChild(i); }
+  return span;
+}
+function hintFor(backend, erro) {
+  if (!erro || !/fetch|network|load failed|cors/i.test(erro)) return null;
+  if (backend === 'ollama') return 'Dica: o navegador bloqueou o pedido (CORS ou Ollama desligado). Inicie o Ollama com OLLAMA_ORIGINS="*" ollama serve, ou rode node arena/servir.mjs e use a URL /ollama.';
+  if (backend === 'jev') return 'Dica: a API pode não aceitar pedidos do navegador (CORS). Rode node arena/servir.mjs e use a URL /typesafe.';
+  return null;
+}
+
+let stopping = false, running = false;
+
+// ---------- um lado do confronto ----------
+class Side {
+  constructor(name, root) {
+    this.name = name; this.root = root;
+    this.q = k => root.querySelector(`[data-k="${k}"]`);
+    this.frame = this.q('frame');
+    this.clock = makeClock(this.q('clock'));
+    const s = { ...DEFAULTS[name], ...(saved[name] || {}) };
+    for (const k of Object.keys(DEFAULTS[name])) this.q(k).value = s[k];
+    this.q('backend').addEventListener('change', () => this.syncFields());
+    this.syncFields();
+  }
+  syncFields() {
+    const b = this.q('backend').value;
+    this.root.querySelectorAll('[data-for]').forEach(el => { el.hidden = el.dataset.for !== b; });
+    this.q('help').textContent = HELP[b];
+  }
+  readCfg() { return Object.fromEntries(Object.keys(DEFAULTS[this.name]).map(k => [k, this.q(k).value.trim()])); }
+  setDisabled(on) { this.root.querySelectorAll('.form input,.form select').forEach(el => { el.disabled = on; }); }
+  async makeBackend(c) {
+    this.backend = await loadBackend(c.backend, c.backend === 'ollama' ? { baseUrl: c.ollamaUrl, model: c.ollamaModel || undefined }
+      : c.backend === 'jev' ? { baseUrl: c.jevUrl, apiKey: c.jevKey, model: c.jevModel || undefined } : {});
+  }
+  get doc() { return this.frame.contentDocument; }
+  get win() { return this.frame.contentWindow; }
+  load(html) {
+    return new Promise((resolve, reject) => {
+      const to = setTimeout(() => reject(new Error('o jogo não carregou no iframe')), 20000);
+      this.frame.addEventListener('load', () => { clearTimeout(to); resolve(); }, { once: true });
+      this.frame.srcdoc = html;
+    });
+  }
+  // az-cur do iframe (o armazenamento em memória dele); readState tira a palavra secreta.
+  rawState() { try { return JSON.parse(this.win.localStorage.getItem('az-cur') || 'null'); } catch { return null; } }
+  readState() { const s = this.rawState(); if (!s) return null; const { secret, key, ...rest } = s; return rest; }
+  key(k) { this.doc.dispatchEvent(new this.win.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true })); }
+  async submitWord(word, prev) {
+    const t = this.doc.getElementById('toast'); if (t) t.hidden = true;
+    for (const ch of word) { this.key(ch); await this.clock.pause(60 + Math.random() * 60); }
+    this.key('Enter');
+    const r = await waitFor(() => {
+      const s = this.readState();
+      if (s && s.guesses.length > prev) return 'ok';
+      const t = this.doc.getElementById('toast');
+      if (t && !t.hidden && /dicion/.test(t.textContent)) return 'invalida';
+      return false;
+    });
+    if (!r) throw new Error(`o jogo não respondeu à palavra ${word}`);
+    return r;
+  }
+  async clearRow(len) { for (let i = 0; i < len + 1; i++) { this.key('Backspace'); await this.clock.pause(50); } }
+  log(parts, cls = '') {
+    const el = this.q('log');
+    if (el.firstElementChild?.classList.contains('empty')) el.innerHTML = '';
+    const li = document.createElement('li'); li.append(...[].concat(parts)); if (cls) li.className = cls;
+    el.appendChild(li); el.scrollTop = el.scrollHeight;
+  }
+  facts(f) { for (const [k, v] of Object.entries(f)) this.q(k).textContent = v; }
+  state(t) { this.q('state').textContent = t; }
+  badge(t, cls = '') { const b = this.q('badge'); b.hidden = !t; b.textContent = t || ''; b.className = 'badge ' + cls; }
+  renderOptions(options, chosen, code) {
+    this.q('opts').innerHTML = options.map(o => `<tr class="${o.id === chosen ? 'pick' : ''}">
+      <td class="w">${esc(o.word)}${o.id === code ? ' <span class="tag" title="escolha do código">código</span>' : ''}</td>
+      <td>${o.pode_ser_a_resposta === 'sim' ? '<span class="tag ok">sim</span>' : 'não'}</td>
+      <td>${esc(o.frequencia)}</td><td class="n">${esc(o.informacao_esperada_bits)}</td><td>${esc(o.opcoes_restantes_em_media)}</td></tr>`).join('');
+  }
+
+  // Joga um jogo inteiro; devolve o registro no mesmo formato do jogar.mjs.
+  async play(cfg, n, entries) {
+    const backend = this.backend;
+    const play = await waitFor(() => this.doc.getElementById('play'));
+    if (!play) throw new Error('botão #play não encontrado');
+    this.log(`Jogo ${n} · ${BACKEND_LABEL[backend.name]} (${backend.model})`, 'game');
+    play.click();
+    this.clock.start(); // "tempo desde o start"
+    const moves = [];
+    let S = this.readState();
+    if (!S || S.done || S.guesses.length) throw new Error('o jogo não começou limpo');
+    while (!S.done) {
+      if (stopping) throw new Error('interrompido');
+      const round = S.guesses.length + 1;
+      this.facts({ fMove: `${round} de ${cfg.tries}`, fLat: '…' });
+      const cands = candidates(entries, S.guesses);
+      const ranked = S.guesses.length === 0 ? openers.get(cfg.v + cfg.len) : rankGuesses(entries, cands);
+      const options = describeOptions(ranked, cands, cfg.k);
+      const ids = options.map(o => o.id);
+      const ctx = { state: describeState(S, cands, entries.length), options, ids, codeChoice: ids[0] };
+      this.facts({ fCands: fmt(cands.length) });
+      this.renderOptions(options, null, ctx.codeChoice);
+      this.q('choice').hidden = true;
+      this.state(`${BACKEND_LABEL[backend.name]} escolhendo entre ${ids.length} opções…`);
+
+      const r = await pick(backend, ctx);
+      const motivo = r.motivo ?? (backend.name === 'code' ? 'maior informação esperada' : null);
+      const chosenWord = options.find(o => o.id === r.id)?.word ?? String(r.id).toUpperCase();
+      this.renderOptions(options, r.id, ctx.codeChoice);
+      this.facts({ fLat: `${fmt(r.latencyMs)} ms` });
+      this.q('choice').hidden = false;
+      this.q('choice').innerHTML = `Escolha: <b>${esc(chosenWord)}</b> · ${fmt(r.latencyMs)} ms` +
+        (motivo ? ` · motivo: ${esc(motivo)}` : '') + (r.invalid ? ' · <span class="tag bad">inválida, usando a do código</span>' : '');
+      this.state(`Digitando ${chosenWord}…`);
+
+      let word = r.id, invalidWord = false;
+      let res = await this.submitWord(word, S.guesses.length);
+      if (res === 'invalida') {
+        invalidWord = true;
+        await this.clearRow(cfg.len);
+        word = ctx.codeChoice;
+        res = await this.submitWord(word, S.guesses.length);
+        if (res !== 'ok') throw new Error(`palavra recusada duas vezes: ${word}`);
+      }
+      const m = {
+        word, latencyMs: r.latencyMs, invalid: r.invalid || invalidWord,
+        ...(invalidWord ? { palavraRecusada: r.id } : {}),
+        tokens: { entrada: r.tokensIn, saida: r.tokensOut },
+        candidatesBefore: cands.length, opcoes: ids.length,
+        igualAoCodigo: !r.invalid && r.id === ctx.codeChoice,
+        ...(r.motivo ? { motivo: r.motivo } : {}),
+        ...(r.erro ? { erro: r.erro } : {}),
+      };
+      moves.push(m);
+      S = this.readState();
+      const g = S.guesses[S.guesses.length - 1];
+      this.log([`J${n}.${round} ${(g.word || word).toUpperCase()} `, minis(g.res), ` ${fmt(r.latencyMs)} ms` +
+        ` · tokens ${fmt(r.tokensIn)}/${fmt(r.tokensOut)} · ${m.igualAoCodigo ? 'igual ao código' : m.invalid ? 'inválida' : 'diferente do código'}` +
+        ` · ${fmt(cands.length)} ${cands.length === 1 ? 'possível' : 'possíveis'}${motivo ? ` · ${motivo}` : ''}`], m.invalid ? 'err' : '');
+      if (r.erro) this.log(`   erro: ${r.erro}`, 'err');
+      if (invalidWord) this.log(`   ${String(r.id).toUpperCase()} não está no dicionário do jogo; digitada a do código.`, 'err');
+      const hint = hintFor(backend.name, r.erro); if (hint) this.log(`   ${hint}`, 'hint');
+      if (cfg.ritmo) { this.state('Pausa (ritmo)…'); await this.clock.pause(cfg.ritmo); }
+    }
+    const tempoTotalMs = this.clock.stop();
+    const finishedAt = performance.now();
+    const secret = this.rawState().secret; // só depois do fim
+    this.log(`Jogo ${n}: ${S.won ? 'vitória' : 'derrota'} em ${S.guesses.length}/${cfg.tries} (${secs(tempoTotalMs)}) · segredo ${String(secret).toUpperCase()}`, 'game');
+    this.state(`Fim do jogo ${n}: ${S.won ? 'vitória' : 'derrota'} em ${S.guesses.length}/${cfg.tries}.`);
+    const game = {
+      jogo: n, data: new Date().toISOString(), url: GAME_URL,
+      backend: backend.name, model: backend.model, len: cfg.len, variant: cfg.v, tries: cfg.tries,
+      won: !!S.won, tentativas: S.guesses.length,
+      guesses: S.guesses.map(g => ({ word: g.word, key: g.key, res: g.res })),
+      secret, tempoTotalMs,
+      tempoModeloMs: moves.reduce((s, m) => s + m.latencyMs, 0),
+      moves,
+    };
+    return { game, finishedAt };
+  }
+}
+const sides = [new Side('esquerda', $('slotL')), new Side('direita', $('slotR'))];
+
+// ---------- quem ganhou ----------
+function duelWinner(a, b) {
+  if (!a.won && !b.won) return { vencedor: 'empate', criterio: 'os dois falharam' };
+  if (a.won !== b.won) return { vencedor: a.won ? 'esquerda' : 'direita', criterio: 'só um acertou' };
+  if (a.tentativas !== b.tentativas) return { vencedor: a.tentativas < b.tentativas ? 'esquerda' : 'direita', criterio: 'menos tentativas' };
+  if (a.tempoTotalMs !== b.tempoTotalMs) return { vencedor: a.tempoTotalMs < b.tempoTotalMs ? 'esquerda' : 'direita', criterio: 'mesmas tentativas, menos tempo' };
+  return { vencedor: 'empate', criterio: 'mesmas tentativas e tempo' };
+}
+
+// ---------- placar e lista de jogos ----------
+let games = store.get('arena-duelos', []);
+function sideStats(gs) {
+  const moves = gs.flatMap(g => g.moves), won = gs.filter(g => g.won);
+  const avg = (arr, f) => arr.length ? arr.reduce((s, x) => s + f(x), 0) / arr.length : null;
+  const pct = (a, b) => b ? `${fmt(100 * a / b)}%` : '-';
+  const inv = moves.filter(m => m.invalid).length, agree = moves.filter(m => m.igualAoCodigo).length;
+  const last = gs.at(-1);
+  return {
+    backend: last ? `${BACKEND_LABEL[last.backend] || last.backend} · ${last.model}` : '',
+    rows: {
+      'Vitórias': gs.length ? `${won.length} (${pct(won.length, gs.length)})` : '-',
+      'Média de tentativas': gs.length ? fmt(avg(gs, g => g.tentativas), 2) : '-',
+      'Tempo médio total': gs.length ? secs(avg(gs, g => g.tempoTotalMs)) : '-',
+      'Latência média por jogada': moves.length ? `${fmt(avg(moves, m => m.latencyMs), 1)} ms` : '-',
+      'Respostas inválidas': moves.length ? `${inv} (${pct(inv, moves.length)})` : '-',
+      'Igual ao código': moves.length ? `${agree} (${pct(agree, moves.length)})` : '-',
+      'Tokens entrada / saída': `${fmt(moves.reduce((s, m) => s + m.tokens.entrada, 0))} / ${fmt(moves.reduce((s, m) => s + m.tokens.saida, 0))}`,
+    },
+  };
+}
+function renderResults() {
+  $('dl').disabled = $('clear').disabled = !games.length || running;
+  const L = sideStats(games.map(g => g.lados.esquerda)), R = sideStats(games.map(g => g.lados.direita));
+  const wins = s => games.filter(g => g.vencedor === s).length, draws = games.filter(g => g.vencedor === 'empate').length;
+  $('vsScore').textContent = `${wins('esquerda')} × ${wins('direita')}`;
+  $('vsDraws').textContent = `jogos vencidos no confronto · ${games.length} ${games.length === 1 ? 'jogo' : 'jogos'} · ${draws} ${draws === 1 ? 'empate' : 'empates'}`;
+  $('vsL').innerHTML = `Esquerda<small>${esc(L.backend)}</small>`;
+  $('vsR').innerHTML = `Direita<small>${esc(R.backend)}</small>`;
+  const rows = [['Jogos', fmt(games.length), fmt(games.length)], ['Vencidos no confronto', fmt(wins('esquerda')), fmt(wins('direita'))],
+    ...Object.keys(L.rows).map(k => [k, L.rows[k], R.rows[k]])];
+  $('board').innerHTML = rows.map(([k, a, b]) => `<tr><td>${k}</td><td class="n">${a}</td><td class="n">${b}</td></tr>`).join('');
+  const sideLine = (s, g) => `<span class="lbl">${SIDE_LABEL[s]}</span><span><span class="tag ${g.won ? 'ok' : 'bad'}">${g.won ? 'vitória' : 'derrota'} ${g.tentativas}/${g.tries}</span>
+    <span class="seq">${esc(g.guesses.map(x => x.word.toUpperCase()).join(' › '))} · ${secs(g.tempoTotalMs)} · ${esc(BACKEND_LABEL[g.backend] || g.backend)}</span></span>`;
+  $('games').innerHTML = games.length ? games.slice().reverse().map(d => `<li>
+    <div class="head"><b>#${d.jogo}</b><span>segredo <span class="sec">${esc(d.segredo)}</span></span>
+      <span>${d.vencedor === 'empate' ? '<b>empate</b>' : `vence <b>${SIDE_LABEL[d.vencedor]}</b>`} (${esc(d.criterio)})</span>
+      <span class="help">terminou primeiro: ${SIDE_LABEL[d.primeiroATerminar]}</span></div>
+    ${sideLine('esquerda', d.lados.esquerda)}${sideLine('direita', d.lados.direita)}</li>`).join('')
+    : '<li class="empty">Nenhum jogo terminado ainda.</li>';
+}
+$('dl').addEventListener('click', () => {
+  const blob = new Blob([games.map(g => JSON.stringify(g)).join('\n') + '\n'], { type: 'application/x-ndjson' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `arena-duelo-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.jsonl`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+$('clear').addEventListener('click', () => {
+  games = []; store.set('arena-duelos', games); renderResults();
+  for (const s of sides) { s.q('log').innerHTML = '<li class="empty">Nada ainda.</li>'; s.badge(''); }
+});
+
+// ---------- execução ----------
+function setRunning(on, msg) {
+  running = on;
+  $('start').disabled = on; $('stop').disabled = !on;
+  cfgEls.forEach(el => { el.disabled = on; });
+  sides.forEach(s => s.setDisabled(on));
+  $('runState').textContent = msg;
+  renderResults();
+}
+function loadBoth(cfg, seed) {
+  const prefs = { v: cfg.v, len: cfg.len, tries: cfg.tries };
+  return Promise.all(sides.map(s => s.load(buildHtml(seed, prefs))));
+}
+const newSeed = i => (Date.now() ^ Math.imul(i + 1, 0x9E3779B1)) >>> 0;
+
+$('stop').addEventListener('click', () => { stopping = true; $('stop').disabled = true; $('runState').textContent = 'Parando depois da jogada em curso…'; });
+$('start').addEventListener('click', async () => {
+  if (!gameHtml) return;
+  const cfg = readCfg();
+  stopping = false;
+  $('bootError').hidden = true;
+  setRunning(true, 'Jogando…');
+  try {
+    for (const s of sides) {
+      try { await s.makeBackend(cfg[s.name]); } catch (e) { s.log(`Erro ao carregar o backend: ${e.message}`, 'err'); throw e; }
+    }
+    for (let i = 0; i < cfg.jogos && !stopping; i++) {
+      const n = games.length + 1, seed = newSeed(n);
+      sides.forEach(s => { s.badge(''); s.state('Carregando o jogo…'); });
+      $('runState').textContent = `Jogo ${i + 1} de ${cfg.jogos}…`;
+      await loadBoth(cfg, seed);
+      const entries = getEntries(JSON.parse(sides[0].doc.getElementById('words').textContent), cfg.v, cfg.len);
+      // os dois lados começam juntos, cada um no seu laço assíncrono
+      let first = null;
+      const settled = await Promise.allSettled(sides.map(s => s.play(cfg, n, entries).then(r => {
+        s.badge(first ? 'terminou em 2º' : 'terminou primeiro', first ? '' : 'first');
+        first ??= s.name;
+        return r;
+      })));
+      sides.forEach(s => { if (s.clock.timer) s.clock.stop(); });
+      const failed = settled.filter(x => x.status === 'rejected');
+      if (failed.length) {
+        if (failed.some(x => x.reason?.message === 'interrompido')) { sides.forEach(s => s.log('Interrompido: este jogo não entra nos resultados.', 'err')); break; }
+        settled.forEach((x, j) => { if (x.status === 'rejected') sides[j].log(`Jogo ${n}: erro: ${x.reason?.message}`, 'err'); });
+        continue;
+      }
+      const [a, b] = settled.map(x => x.value.game);
+      if (a.secret !== b.secret) sides.forEach(s => s.log(`Aviso: segredos diferentes (${a.secret} / ${b.secret}).`, 'err'));
+      games.push({
+        jogo: n, data: new Date().toISOString(), seed, segredo: a.secret, len: cfg.len, variant: cfg.v, tries: cfg.tries,
+        ...duelWinner(a, b), primeiroATerminar: first,
+        lados: { esquerda: a, direita: b },
+      });
+      store.set('arena-duelos', games); renderResults();
+      if (cfg.ritmo && i < cfg.jogos - 1 && !stopping) await sleep(cfg.ritmo * 3); // deixa o fim visível
+    }
+  } catch (e) {
+    $('bootError').hidden = false; $('bootError').textContent = `Erro: ${e.message}`;
+  } finally {
+    sides.forEach(s => { if (s.clock.timer) s.clock.stop(); });
+    setRunning(false, stopping ? 'Parado.' : 'Terminado.');
+  }
+});
+for (const el of [...cfgEls, ...document.querySelectorAll('.side .form [data-k]')]) el.addEventListener('change', () => readCfg());
+
+// ---------- arranque: busca o jogo uma vez e mostra os dois lados em repouso ----------
+renderResults();
+try {
+  const res = await fetch(GAME_URL, { cache: 'no-cache' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  gameHtml = await res.text();
+  await loadBoth(readCfg(), newSeed(0));
+} catch (e) {
+  $('bootError').hidden = false;
+  $('bootError').textContent = `Não foi possível carregar o jogo (${GAME_URL}): ${e.message}`;
+  $('start').disabled = true;
+}
+</script>
+</body>
+</html>
