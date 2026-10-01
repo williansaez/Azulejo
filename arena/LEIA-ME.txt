@@ -70,7 +70,14 @@ Opções:
   --model NOME                modelo do backend (ollama: qwen3.5:9b; jev: jev-latest)
   --opcoes K                  quantas opções o modelo vê por jogada (padrão 8)
   --visivel                   mostra o navegador (por padrão roda sem janela)
+  --ritmo MS                  pausa em ms depois de cada jogada e no fim do jogo,
+                              para dar tempo de ver; não conta no tempo medido
+                              (com --visivel o padrão é 900; sem, 0)
   --saida PASTA               onde gravar os .jsonl (padrão arena/resultados)
+
+Para assistir ao agente jogando:
+  node arena/jogar.mjs --backend code --jogos 3 --local --visivel
+  node arena/jogar.mjs --backend ollama --jogos 3 --local --visivel --ritmo 1500
 
 Ctrl-C interrompe e imprime o resumo do que já foi jogado.
 

@@ -4,7 +4,7 @@
 //
 //   node arena/jogar.mjs --backend code|ollama|jev [--jogos 3] [--letras 5]
 //     [--variante pt|br] [--tentativas 6] [--url URL] [--local]
-//     [--model qwen3.5:9b] [--opcoes 8] [--visivel] [--saida arena/resultados]
+//     [--model qwen3.5:9b] [--opcoes 8] [--visivel] [--ritmo MS] [--saida arena/resultados]
 
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
@@ -31,6 +31,7 @@ const { values: a } = parseArgs({
     model: { type: 'string' },
     opcoes: { type: 'string', default: '8' },
     visivel: { type: 'boolean', default: false },
+    ritmo: { type: 'string' },
     saida: { type: 'string' },
     ajuda: { type: 'boolean', short: 'h', default: false },
   },
@@ -39,6 +40,9 @@ if (a.ajuda) {
   console.log(fs.readFileSync(path.join(ARENA_DIR, 'LEIA-ME.txt'), 'utf8'));
   process.exit(0);
 }
+// Pausa (ms) depois de cada jogada e no fim de cada jogo, para dar tempo de ver.
+// Não entra no tempo medido. Com --visivel e sem --ritmo, usa 900 ms.
+const ritmo = a.ritmo != null ? Math.max(0, parseInt(a.ritmo, 10) || 0) : (a.visivel ? 900 : 0);
 const cfg = {
   backend: a.backend,
   jogos: Math.max(1, parseInt(a.jogos, 10) || 1),
@@ -131,6 +135,7 @@ async function playGame(browser, url, backend, n) {
 
     await page.click('#play');
     const t0 = Date.now(); // "tempo depois do start"
+    let pausas = 0;
     await page.evaluate(() => document.activeElement?.blur());
 
     const moves = [];
@@ -171,8 +176,10 @@ async function playGame(browser, url, backend, n) {
       });
       if (r.erro && process.env.ARENA_DEBUG) console.error(`  [jogada ${moves.length}] ${r.erro}`);
       S = await readState(page);
+      if (ritmo) { await page.waitForTimeout(ritmo); pausas += ritmo; }
     }
-    const tempoTotalMs = Date.now() - t0;
+    const tempoTotalMs = Date.now() - t0 - pausas;
+    if (ritmo) await page.waitForTimeout(ritmo * 3); // deixa a tela de fim visível
     const secret = await page.evaluate(() => JSON.parse(localStorage.getItem('az-cur')).secret); // só depois do fim
     return {
       jogo: n, data: new Date().toISOString(), url,
