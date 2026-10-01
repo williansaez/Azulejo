@@ -1,0 +1,14 @@
+{
+  "name": "azulejo-arena",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Arena para IAs jogarem o Azulejo das Palavras e medir acerto e tempo",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "jogar": "node jogar.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.47.0"
+  }
+}

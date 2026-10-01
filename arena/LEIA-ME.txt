@@ -1,0 +1,180 @@
+ARENA DO AZULEJO DAS PALAVRAS
+=============================
+
+Uma arena para IAs jogarem o Azulejo das Palavras no navegador de verdade e
+para medir quantas palavras acertam, em quantas tentativas e quanto tempo
+levam. Segue o desenho do jev-tetris (github.com/trungdq88/jev-tetris):
+"primeiro o código". O código enumera as jogadas possíveis e simula o
+resultado de cada uma; o modelo só escolhe uma opção de uma lista curta,
+descrita em palavras. Mede-se a latência e o acerto de cada jogada.
+
+
+ARQUIVOS
+--------
+jogar.mjs            linha de comando: abre o jogo (Playwright), joga e mede
+solver.mjs           lógica pura: norm, score (igual ao jogo), buildList,
+                     candidates, rankGuesses (entropia), describeOptions,
+                     describeState
+backends/index.mjs   contrato comum: pick(backend, contexto)
+backends/code.mjs    linha de base: escolhe sempre a melhor opção do código
+backends/ollama.mjs  modelo local via Ollama (/api/chat)
+backends/jev.mjs     TypeSafe "System One" (o "Jev" do jev-tetris)
+test/mock-ollama.mjs servidor falso de /api/chat, para testes sem modelo
+test/mock-jev.mjs    servidor falso de /v1/systemone, para testes sem chave
+resultados/          um arquivo .jsonl por execução (um jogo por linha)
+
+
+INSTALAÇÃO
+----------
+Precisa de Node 20 ou mais novo.
+
+  cd arena
+  npm install
+  npx playwright install chromium
+
+Se o Playwright já estiver instalado globalmente, o jogar.mjs usa essa
+instalação quando o import local falha (variável PLAYWRIGHT_GLOBAL para
+indicar outro caminho). O Chromium usado é o de PW_CHROMIUM, ou
+/opt/pw-browsers/chromium se existir, ou o padrão do Playwright.
+
+
+COMO RODAR
+----------
+Os comandos abaixo valem a partir da raiz do repositório. De dentro de arena/
+também dá: npm run jogar -- --backend code --jogos 3
+
+Linha de base (sem rede, sem modelo):
+  node arena/jogar.mjs --backend code --jogos 3 --local
+
+Modelo local com Ollama (padrão qwen3.5:9b):
+  ollama pull qwen3.5:9b
+  ollama serve                       (se ainda não estiver rodando)
+  node arena/jogar.mjs --backend ollama --jogos 5 --local
+  node arena/jogar.mjs --backend ollama --model qwen3.5:9b --jogos 5 --local
+
+Ollama noutra máquina ou porta:
+  OLLAMA_URL=http://192.168.0.10:11434 node arena/jogar.mjs --backend ollama --local
+
+TypeSafe / Jev:
+  TYPESAFE_API_KEY=sua-chave node arena/jogar.mjs --backend jev --jogos 3 --local
+
+Opções:
+  --backend code|ollama|jev   quem escolhe as jogadas (padrão code)
+  --jogos N                   quantos jogos (padrão 3)
+  --letras 4|5|6              tamanho da palavra (padrão 5)
+  --variante pt|br            Portugal ou Brasil (padrão pt)
+  --tentativas 4|6|10         Difícil, Normal, Fácil (padrão 6)
+  --url URL                   endereço do jogo (padrão https://datm83.github.io/Azulejo/)
+  --local                     serve esta pasta do repositório num servidor http
+                              local (só módulo http do Node) e joga nela
+  --model NOME                modelo do backend (ollama: qwen3.5:9b; jev: jev-latest)
+  --opcoes K                  quantas opções o modelo vê por jogada (padrão 8)
+  --visivel                   mostra o navegador (por padrão roda sem janela)
+  --saida PASTA               onde gravar os .jsonl (padrão arena/resultados)
+
+Ctrl-C interrompe e imprime o resumo do que já foi jogado.
+
+Testes com servidores falsos (provam o caminho de pedido e resposta):
+  node arena/test/mock-ollama.mjs 11435 &
+  OLLAMA_URL=http://127.0.0.1:11435 node arena/jogar.mjs --backend ollama --jogos 1 --local
+  node arena/test/mock-jev.mjs 8788 &
+  TYPESAFE_URL=http://127.0.0.1:8788 TYPESAFE_API_KEY=teste node arena/jogar.mjs --backend jev --jogos 1 --local
+  Com MOCK_MODO=invalido os mocks devolvem uma escolha que não existe, para
+  testar a queda para o código.
+
+
+VARIÁVEIS DE AMBIENTE
+---------------------
+OLLAMA_URL          base do Ollama (padrão http://localhost:11434)
+TYPESAFE_URL        base da API TypeSafe (padrão https://api.typesafe.ai)
+TYPESAFE_API_KEY    chave da TypeSafe (Authorization: Bearer ...)
+ARENA_TIMEOUT_MS    tempo limite de cada chamada ao modelo (padrão 120000)
+ARENA_DEBUG=1       mostra no terminal o erro de cada jogada inválida
+PW_CHROMIUM         caminho do executável do Chromium
+PLAYWRIGHT_GLOBAL   caminho do pacote playwright, se não estiver em arena/node_modules
+
+
+COMO FUNCIONA CADA JOGO
+-----------------------
+1. Abre um contexto novo do navegador. Antes de a página carregar, grava em
+   localStorage az-prefs2 = {v, len, tries} e apaga o jogo em curso (az-cur),
+   para o botão #play começar sempre um jogo novo.
+2. Clica em #play. Nesse instante começa o relógio do jogo (tempo depois do
+   start).
+3. A cada rodada lê az-cur SEM a palavra secreta (os campos secret e key são
+   removidos ainda dentro da página), filtra as palavras ainda possíveis
+   (candidatas), calcula para cada palavra da lista a informação esperada
+   (entropia das cores que ela produziria) e monta as K melhores opções.
+   Se restam até K candidatas, todas entram nas opções; senão entram pelo
+   menos as duas mais comuns.
+4. Cada opção tem sempre os mesmos campos, em palavras, por exemplo:
+     { "id": "serao", "word": "SERÃO", "pode_ser_a_resposta": "sim",
+       "frequencia": "muito comum", "informacao_esperada_bits": "6,3",
+       "opcoes_restantes_em_media": "cerca de 35 de 1776",
+       "chance_de_acertar_agora": "1 em 1776" }
+   frequencia é o terço da lista (ordenada por frequência) onde a palavra está.
+   O jogo sorteia a palavra secreta com chance igual entre todas as da lista.
+5. O backend escolhe um id. A palavra é digitada com o teclado do Playwright
+   (letras + Enter), como uma pessoa faria. O harness espera a tentativa
+   aparecer em az-cur ou o aviso "Essa palavra não está no dicionário".
+6. Repete até o jogo terminar. Só então lê a palavra secreta, para o registro.
+
+Todas as opções vêm da lista de palavras secretas do próprio jogo, que estão
+todas no dicionário; por isso o backend code nunca recebe o aviso de palavra
+inválida. Se um backend escolher algo inválido, o harness apaga a linha e
+digita a escolha do código.
+
+
+O QUE É MEDIDO
+--------------
+Por jogo (uma linha JSON em resultados/<backend>-<data>.jsonl):
+  backend, model, len, variant, tries, won, tentativas, guesses (palavra e
+  cores), secret (lido só depois do fim), tempoTotalMs (do clique em #play
+  até o fim), tempoModeloMs (soma das latências do modelo) e moves.
+Por jogada (moves):
+  word, latencyMs (tempo da chamada ao backend), invalid, tokens
+  {entrada, saida}, candidatesBefore (palavras possíveis antes da jogada),
+  opcoes, igualAoCodigo (o modelo escolheu o mesmo que o código?), motivo e
+  erro quando houver.
+
+Resposta inválida: erro de rede ou HTTP, JSON ilegível, escolha fora da lista
+de ids, ou palavra recusada pelo jogo. Em todos os casos a jogada usa a
+escolha do código e conta como inválida.
+
+Tokens: no Ollama, prompt_eval_count e eval_count; na TypeSafe,
+usage.input_tokens e usage.output_tokens (se vierem na resposta).
+
+O resumo final mostra: jogos, vitórias, média de tentativas, tempo médio
+total por jogo, latência média por jogada, respostas inválidas,
+concordância com o código e tokens.
+
+
+DESENHO (COMO NO JEV-TETRIS)
+----------------------------
+- O código faz o trabalho exato: conhece o dicionário, aplica as cores e
+  calcula o que cada palavra revelaria. O modelo não precisa soletrar nem
+  lembrar regras; só julga entre poucas opções bem descritas.
+- Todas as opções têm os mesmos campos, com números traduzidos em palavras
+  quando ajuda ("muito comum", "cerca de 35 de 1776").
+- A resposta é restrita: no Ollama, um JSON Schema com enum dos ids; na
+  TypeSafe, uma pergunta do tipo "choice" cujos critérios são as opções.
+- O backend code é a linha de base: mostra o teto do que as opções permitem
+  e serve de referência para a concordância.
+
+
+AVISO SOBRE A TYPESAFE
+----------------------
+O endereço (https://api.typesafe.ai/v1/systemone), o modelo "jev-latest" e o
+formato do pedido e da resposta (state, model, questions com type "choice",
+instructions.question/priorities e criteria; answers.<pergunta>.choice,
+probabilities, confidence; usage) foram tirados da leitura do código do
+jev-tetris (public/jev.js e lib/typesafe.mjs) e NÃO foram verificados contra
+a API real, porque não havia chave. Por isso o endereço é configurável com
+TYPESAFE_URL. Como no jev-tetris, cada critério é o objeto da opção (os
+mesmos campos que o Ollama recebe), e não um texto corrido.
+
+Outras observações:
+- Rodar no endereço publicado depende de o navegador ter acesso à internet;
+  em redes com proxy, use --local.
+- O tempo total inclui o cálculo do código (a primeira jogada de cada
+  tamanho/variante leva alguns décimos de segundo e depois fica em cache).
