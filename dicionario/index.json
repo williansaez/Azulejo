@@ -1,0 +1,85 @@
+{
+ "tamanhos": [
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  11,
+  12,
+  13
+ ],
+ "extremo": [
+  10,
+  13
+ ],
+ "contagem": {
+  "4": {
+   "sorteaveis": 4093,
+   "chaves": 3752,
+   "grafia_br": 70,
+   "extras": 378
+  },
+  "5": {
+   "sorteaveis": 12999,
+   "chaves": 12476,
+   "grafia_br": 145,
+   "extras": 1096
+  },
+  "6": {
+   "sorteaveis": 28393,
+   "chaves": 27444,
+   "grafia_br": 137,
+   "extras": 2604
+  },
+  "7": {
+   "sorteaveis": 49274,
+   "chaves": 47470,
+   "grafia_br": 136,
+   "extras": 0
+  },
+  "8": {
+   "sorteaveis": 72980,
+   "chaves": 69875,
+   "grafia_br": 104,
+   "extras": 0
+  },
+  "9": {
+   "sorteaveis": 89986,
+   "chaves": 85609,
+   "grafia_br": 99,
+   "extras": 0
+  },
+  "10": {
+   "sorteaveis": 96987,
+   "chaves": 92099,
+   "grafia_br": 79,
+   "extras": 0
+  },
+  "11": {
+   "sorteaveis": 87814,
+   "chaves": 83273,
+   "grafia_br": 33,
+   "extras": 0
+  },
+  "12": {
+   "sorteaveis": 70123,
+   "chaves": 66664,
+   "grafia_br": 17,
+   "extras": 0
+  },
+  "13": {
+   "sorteaveis": 48900,
+   "chaves": 46649,
+   "grafia_br": 6,
+   "extras": 0
+  }
+ },
+ "fontes": [
+  "pythonprobr/palavras (pt-BR)",
+  "LibreOffice pt_PT (Hunspell, expandido com spylls)",
+  "listas originais do jogo (4-6 letras, só como tentativa)"
+ ]
+}

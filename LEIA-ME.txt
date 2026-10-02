@@ -6,6 +6,7 @@ Conteúdo da pasta
 - manifest.webmanifest  nome, cores e ícones da app
 - sw.js                 permite jogar sem internet
 - icons/                ícones da app
+- dicionario/           as palavras do jogo (ver "Dicionário" no fim)
 
 1) PUBLICAR ONLINE (escolha uma opção)
 
@@ -39,3 +40,40 @@ Depois de aberta uma vez, a app funciona sem internet.
   Substitua os ficheiros no site e, em sw.js, mude VERSION
   (ex.: 'azulejo-v1' para 'azulejo-v2'). Os telemóveis recebem a
   nova versão na próxima vez que abrirem a app com internet.
+
+4) DICIONÁRIO
+
+A palavra secreta é sorteada ao acaso entre TODAS as palavras do
+dicionário com o tamanho escolhido (não de uma lista de palavras
+frequentes). Tamanhos: 4, 5, 6, 7, 8 ou 9 letras, ou Extremo, que em
+cada jogo escolhe ao acaso um tamanho de 10 a 13 letras e depois uma
+palavra desse tamanho. A opção Grafia (Portugal / Brasil) só muda os
+acentos com que a palavra é mostrada (fénix / fênix).
+
+Ficheiros em dicionario/
+- index.json        tamanhos disponíveis e número de palavras de cada um
+- 4.json ... 13.json  palavras de cada tamanho (de 22 KB a 1,1 MB; 6 MB
+                    no total). O jogo só descarrega o ficheiro do tamanho
+                    que vai jogar; a app instalada guarda todos na
+                    primeira visita para funcionar sem internet.
+- gerar.py          o programa que gera os ficheiros acima
+
+Cada <n>.json tem: w (palavras sorteáveis, com acentos), br (grafia do
+Brasil das palavras que só mudam o acento) e x (palavras extra aceites
+como tentativa mas nunca sorteadas, só em 4-6 letras).
+
+Para gerar de novo (detalhes no cabeçalho de dicionario/gerar.py):
+  python3 dicionario/gerar.py palavras.txt pt_PT_palavras.txt [words-antigas.json]
+  - palavras.txt: lista de pythonprobr/palavras
+  - pt_PT_palavras.txt: pt_PT.dic + pt_PT.aff expandidos com
+    examples/unmunch.py do spylls (pip install spylls)
+  - words-antigas.json (opcional): a lista antiga do jogo, cujas
+    palavras de 4-6 letras continuam aceites como tentativa
+Depois de gerar, aumente VERSION em sw.js.
+
+Fontes e licenças
+- pythonprobr/palavras (https://github.com/pythonprobr/palavras),
+  licença MIT.
+- Dicionário pt_PT do LibreOffice (Hunspell, repositório
+  LibreOffice/dictionaries), tripla licença GPL / LGPL / MPL,
+  expandido com spylls (https://github.com/zverok/spylls).

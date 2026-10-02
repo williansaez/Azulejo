@@ -2,7 +2,7 @@
 // Arena do Azulejo das Palavras: um backend de IA joga no navegador real
 // (Playwright) e medimos vitórias, tentativas, tempo e latência por jogada.
 //
-//   node arena/jogar.mjs --backend code|ollama|jev [--jogos 3] [--letras 5]
+//   node arena/jogar.mjs --backend code|ollama|jev [--jogos 3] [--letras 4..9|extremo]
 //     [--variante pt|br] [--tentativas 6] [--url URL] [--local]
 //     [--model qwen3.5:9b] [--opcoes 8] [--visivel] [--ritmo MS] [--saida arena/resultados]
 
@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { buildList, candidates, rankGuesses, describeOptions, describeState } from './solver.mjs';
+import { loadDict, suggest, describeOptions, describeState } from './solver.mjs';
 import { loadBackend, pick } from './backends/index.mjs';
 
 const ARENA_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -43,15 +43,18 @@ if (a.ajuda) {
 // Pausa (ms) depois de cada jogada e no fim de cada jogo, para dar tempo de ver.
 // Não entra no tempo medido. Com --visivel e sem --ritmo, usa 900 ms.
 const ritmo = a.ritmo != null ? Math.max(0, parseInt(a.ritmo, 10) || 0) : (a.visivel ? 900 : 0);
+const letras = String(a.letras).toLowerCase();
+const extremo = ['extremo', 'x'].includes(letras);
 const cfg = {
   backend: a.backend,
   jogos: Math.max(1, parseInt(a.jogos, 10) || 1),
-  len: Number(a.letras),
+  len: extremo ? 'x' : Number(letras), // valor de az-prefs2.len: 4..9 ou 'x' (Extremo, 10 a 13 sorteado pelo jogo)
   v: a.variante,
   tries: Number(a.tentativas),
   k: Math.max(2, parseInt(a.opcoes, 10) || 8),
 };
-if (![4, 5, 6].includes(cfg.len)) fail('--letras deve ser 4, 5 ou 6');
+if (!extremo && ![4, 5, 6, 7, 8, 9].includes(cfg.len)) fail('--letras deve ser 4 a 9 ou extremo');
+const lenLabel = extremo ? 'Extremo (10 a 13 letras)' : `${cfg.len} letras`;
 if (!['pt', 'br'].includes(cfg.v)) fail('--variante deve ser pt ou br');
 if (![4, 6, 10].includes(cfg.tries)) fail('--tentativas deve ser 4, 6 ou 10');
 const outDir = a.saida ? path.resolve(a.saida) : path.join(ARENA_DIR, 'resultados');
@@ -106,18 +109,18 @@ async function submitWord(page, word, prevCount) {
     const s = JSON.parse(localStorage.getItem('az-cur') || 'null');
     if (s && s.guesses.length > prev) return 'ok';
     const t = document.getElementById('toast');
-    if (t && !t.hidden && /dicion/.test(t.textContent)) return 'invalida';
+    if (t && !t.hidden && /não está no dicion/.test(t.textContent)) return 'invalida';
     return false;
   }, prevCount, { timeout: 10000, polling: 20 });
   return h.jsonValue();
 }
 async function clearRow(page, len) { for (let i = 0; i < len + 1; i++) await page.keyboard.press('Backspace'); }
 
-const lists = new Map(), openers = new Map();
-function getEntries(W, v, len) {
-  const id = v + len;
-  if (!lists.has(id)) lists.set(id, buildList(W.secret[v][String(len)].split(' ')));
-  return lists.get(id);
+// Dicionário do tamanho sorteado: do disco com --local, senão de <url>/dicionario/<n>.json.
+// Fica em cache (loadDict) e a primeira jogada também (openers), por tamanho e variante.
+const openers = new Map();
+function getDict(n, url) {
+  return a.local ? loadDict(n, { rootDir: GAME_DIR }) : loadDict(n, { root: url, fetchImpl: fetch });
 }
 
 async function playGame(browser, url, backend, n) {
@@ -130,37 +133,43 @@ async function playGame(browser, url, backend, n) {
     const page = await context.newPage();
     await page.goto(url, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#play');
-    const W = await page.evaluate(() => JSON.parse(document.getElementById('words').textContent));
-    const entries = getEntries(W, cfg.v, cfg.len);
 
     await page.click('#play');
-    const t0 = Date.now(); // "tempo depois do start"
-    let pausas = 0;
+    // o jogo pode carregar o dicionário antes de gravar o estado: espera um az-cur novo
+    await page.waitForFunction(() => {
+      const s = JSON.parse(localStorage.getItem('az-cur') || 'null');
+      return !!(s && s.secret && !s.done && s.guesses.length === 0);
+    }, null, { timeout: 30000, polling: 50 });
     await page.evaluate(() => document.activeElement?.blur());
-
-    const moves = [];
     let S = await readState(page);
     if (!S || S.done || S.guesses.length) throw new Error('o jogo não começou limpo');
+    const len = S.len; // tamanho real (no Extremo, sorteado entre 10 e 13)
+    const D = await getDict(len, url);
+    const t0 = Date.now(); // "tempo depois do start" (com o jogo e o dicionário prontos)
+    let pausas = 0;
+
+    const moves = [];
     while (!S.done) {
       if (stopping) throw new Error('interrompido');
-      const cands = candidates(entries, S.guesses);
-      const openerId = cfg.v + cfg.len;
-      let ranked;
-      if (S.guesses.length === 0 && openers.has(openerId)) ranked = openers.get(openerId);
+      const openerId = cfg.v + len;
+      let sug;
+      if (S.guesses.length === 0 && openers.has(openerId)) sug = openers.get(openerId);
       else {
-        ranked = rankGuesses(entries, cands);
-        if (S.guesses.length === 0) openers.set(openerId, ranked);
+        sug = suggest(D, S.guesses, cfg.v);
+        if (S.guesses.length === 0) openers.set(openerId, sug);
       }
-      const options = describeOptions(ranked, cands, cfg.k);
+      const cands = sug.cands;
+      if (!cands.length) throw new Error('nenhuma palavra do dicionário combina com as cores (dicionário diferente do jogo?)');
+      const options = describeOptions(sug, cfg.k);
       const ids = options.map(o => o.id);
-      const ctx = { state: describeState(S, cands, entries.length), options, ids, codeChoice: ids[0] };
+      const ctx = { state: describeState(S, cands.length, D.keys.length, sug.mode), options, ids, codeChoice: ids[0] };
 
       const r = await pick(backend, ctx);
       let word = r.id, invalidWord = false;
       let res = await submitWord(page, word, S.guesses.length);
       if (res === 'invalida') {
         invalidWord = true;
-        await clearRow(page, cfg.len);
+        await clearRow(page, len);
         word = ctx.codeChoice;
         res = await submitWord(page, word, S.guesses.length);
         if (res !== 'ok') throw new Error(`palavra recusada duas vezes: ${word}`);
@@ -169,7 +178,7 @@ async function playGame(browser, url, backend, n) {
         word, latencyMs: r.latencyMs, invalid: r.invalid || invalidWord,
         ...(invalidWord ? { palavraRecusada: r.id } : {}),
         tokens: { entrada: r.tokensIn, saida: r.tokensOut },
-        candidatesBefore: cands.length, opcoes: ids.length,
+        candidatesBefore: cands.length, modoSolver: sug.mode, opcoes: ids.length,
         igualAoCodigo: !r.invalid && r.id === ctx.codeChoice,
         ...(r.motivo ? { motivo: r.motivo } : {}),
         ...(r.erro ? { erro: r.erro } : {}),
@@ -183,7 +192,7 @@ async function playGame(browser, url, backend, n) {
     const secret = await page.evaluate(() => JSON.parse(localStorage.getItem('az-cur')).secret); // só depois do fim
     return {
       jogo: n, data: new Date().toISOString(), url,
-      backend: backend.name, model: backend.model, len: cfg.len, variant: cfg.v, tries: cfg.tries,
+      backend: backend.name, model: backend.model, len, ...(S.modo ? { modo: S.modo } : {}), variant: cfg.v, tries: cfg.tries,
       won: !!S.won, tentativas: S.guesses.length,
       guesses: S.guesses.map(g => ({ word: g.word, key: g.key, res: g.res })),
       secret, tempoTotalMs,
@@ -200,12 +209,12 @@ const fmt = (x, d = 0) => x.toLocaleString('pt-BR', { minimumFractionDigits: d, 
 const secs = ms => `${fmt(ms / 1000, 2)} s`;
 function printSummary(games, backend) {
   console.log('');
-  console.log(`Resumo: backend ${backend.name} (${backend.model}), ${cfg.len} letras, variante ${cfg.v}, ${cfg.tries} tentativas`);
+  console.log(`Resumo: backend ${backend.name} (${backend.model}), ${lenLabel}, variante ${cfg.v}, ${cfg.tries} tentativas`);
   if (!games.length) { console.log('  Nenhum jogo terminado.'); return; }
   const pad = (s, n) => String(s).padEnd(n);
-  console.log('  ' + pad('#', 4) + pad('segredo', 12) + pad('resultado', 11) + pad('tentativas', 12) + pad('tempo total', 13) + 'tempo modelo');
+  console.log('  ' + pad('#', 4) + pad('segredo', 16) + pad('letras', 8) + pad('resultado', 11) + pad('tentativas', 12) + pad('tempo total', 13) + 'tempo modelo');
   for (const g of games) {
-    console.log('  ' + pad(g.jogo, 4) + pad(g.secret, 12) + pad(g.won ? 'vitória' : 'derrota', 11) +
+    console.log('  ' + pad(g.jogo, 4) + pad(g.secret, 16) + pad(g.len, 8) + pad(g.won ? 'vitória' : 'derrota', 11) +
       pad(`${g.tentativas}/${g.tries}`, 12) + pad(secs(g.tempoTotalMs), 13) + secs(g.tempoModeloMs));
   }
   const moves = games.flatMap(g => g.moves);
@@ -260,7 +269,7 @@ async function main() {
     finish(130);
   });
 
-  console.log(`Arena Azulejo: ${cfg.jogos} jogo(s), backend ${backend.name} (${backend.model}), ${url}`);
+  console.log(`Arena Azulejo: ${cfg.jogos} jogo(s), ${lenLabel}, backend ${backend.name} (${backend.model}), ${url}`);
   for (let i = 1; i <= cfg.jogos && !stopping; i++) {
     try {
       const g = await playGame(browser, url, backend, i);
@@ -268,7 +277,7 @@ async function main() {
       games.push(g);
       fs.appendFileSync(outFile, JSON.stringify(g) + '\n');
       const seq = g.guesses.map(x => x.word.toUpperCase()).join(' > ');
-      console.log(`  jogo ${i}: ${g.won ? 'vitória' : 'derrota'} em ${g.tentativas}/${g.tries} (${secs(g.tempoTotalMs)}) ${seq}  [segredo: ${g.secret}]`);
+      console.log(`  jogo ${i} (${g.len} letras): ${g.won ? 'vitória' : 'derrota'} em ${g.tentativas}/${g.tries} (${secs(g.tempoTotalMs)}) ${seq}  [segredo: ${g.secret}]`);
     } catch (e) {
       if (stopping) break;
       console.error(`  jogo ${i}: erro: ${e.message}`);

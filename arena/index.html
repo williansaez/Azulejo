@@ -124,7 +124,7 @@ tr.pick td.w{color:var(--cobalt)}
   <section class="card" aria-labelledby="hCfg">
     <h2 id="hCfg">Regras do confronto</h2>
     <form class="form" id="cfg" autocomplete="off" onsubmit="return false">
-      <label><span class="lbl">Letras</span><select data-c="len"><option>4</option><option>5</option><option>6</option></select></label>
+      <label><span class="lbl">Letras</span><select data-c="len"><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option value="x">Extremo (10 a 13)</option></select></label>
       <label><span class="lbl">Variante</span><select data-c="v"><option value="pt">Portugal</option><option value="br">Brasil</option></select></label>
       <label><span class="lbl">Dificuldade</span><select data-c="tries"><option value="4">Difícil (4)</option><option value="6">Normal (6)</option><option value="10">Fácil (10)</option></select></label>
       <label><span class="lbl">Número de jogos</span><input data-c="jogos" type="number" min="1" max="500"></label>
@@ -185,11 +185,11 @@ tr.pick td.w{color:var(--cobalt)}
           <div><span class="lbl">Latência</span><b data-k="fLat">-</b></div>
         </div>
       </div>
-      <div class="state" data-k="state">O cronômetro começa no clique em Jogar e para nas pausas de ritmo e de digitação.</div>
+      <div class="state" data-k="state">O cronômetro começa quando o jogo e o dicionário estão prontos e para nas pausas de ritmo e de digitação.</div>
       <div class="choice" data-k="choice" hidden></div>
       <div class="tablewrap"><table>
-        <thead><tr><th>Palavra</th><th>Pode ser a resposta</th><th>Frequência</th><th class="n">Bits</th><th>Restantes em média</th></tr></thead>
-        <tbody data-k="opts"><tr><td colspan="5" class="empty">As opções que o modelo vê aparecem aqui.</td></tr></tbody>
+        <thead><tr><th>Palavra</th><th>Pode ser a resposta</th><th class="n">Bits</th><th>Restantes em média</th><th class="n">Heurística</th><th>Chance agora</th></tr></thead>
+        <tbody data-k="opts"><tr><td colspan="6" class="empty">As opções que o modelo vê aparecem aqui.</td></tr></tbody>
       </table></div>
       <span class="lbl">Registro de jogadas</span>
       <ul class="log" data-k="log"><li class="empty">Nada ainda.</li></ul>
@@ -217,7 +217,7 @@ addEventListener('error', e => {
 }, true);
 </script>
 <script type="module">
-import { buildList, candidates, rankGuesses, describeOptions, describeState } from './solver.mjs';
+import { loadDict, suggest, describeOptions, describeState } from './solver.mjs';
 import { loadBackend, pick } from './backends/index.mjs';
 
 const $ = id => document.getElementById(id);
@@ -245,7 +245,7 @@ const DEFAULTS = {
   esquerda: { backend: 'jev', ...SIDE_DEFAULTS }, direita: { backend: 'ollama', ...SIDE_DEFAULTS },
 };
 const HELP = {
-  code: 'Linha de base sem rede: escolhe sempre a opção com maior informação esperada.',
+  code: 'Linha de base sem rede: escolhe sempre a primeira opção do código (maior informação esperada; com milhares de palavras possíveis, maior pontuação heurística).',
   ollama: 'URL "/ollama" usa o proxy do node arena/servir.mjs (sem CORS). Uma URL direta exige iniciar o Ollama com OLLAMA_ORIGINS igual à origem desta página (ou "*").',
   jev: 'URL "/typesafe" usa o proxy do node arena/servir.mjs, que acrescenta TYPESAFE_API_KEY. A chave digitada aqui fica guardada só neste navegador.',
 };
@@ -258,7 +258,7 @@ function readCfg() {
   for (const s of sides) c[s.name] = s.readCfg();
   store.set('arena-config', c);
   return {
-    ...c, len: Number(c.len), tries: Number(c.tries),
+    ...c, len: c.len === 'x' ? 'x' : Number(c.len), tries: Number(c.tries),
     jogos: Math.max(1, parseInt(c.jogos, 10) || 1),
     ritmo: Math.max(0, parseInt(c.ritmo, 10) || 0),
     k: Math.max(2, parseInt(c.k, 10) || 8),
@@ -300,13 +300,13 @@ function makeClock(el) {
   };
 }
 
-// ---------- solver: lista e primeira jogada em cache, calculadas antes dos relógios ----------
-const lists = new Map(), openers = new Map();
-function getEntries(W, v, len) {
-  const id = v + len;
-  if (!lists.has(id)) lists.set(id, buildList(W.secret[v][String(len)].split(' ')));
-  if (!openers.has(id)) openers.set(id, rankGuesses(lists.get(id), lists.get(id)));
-  return lists.get(id);
+// ---------- solver: dicionário (dicionario/<n>.json) e primeira jogada em cache, antes dos relógios ----------
+// O tamanho só se sabe depois do clique em Jogar (no Extremo o jogo sorteia 10 a 13).
+const openers = new Map();
+async function prepare(v, len) {
+  const D = await loadDict(len, { root: ROOT_URL });
+  if (!openers.has(v + len)) openers.set(v + len, suggest(D, [], v));
+  return D;
 }
 
 async function waitFor(fn, ms = 10000, every = 100) {
@@ -377,7 +377,7 @@ class Side {
       const s = this.readState();
       if (s && s.guesses.length > prev) return 'ok';
       const t = this.doc.getElementById('toast');
-      if (t && !t.hidden && /dicion/.test(t.textContent)) return 'invalida';
+      if (t && !t.hidden && /não está no dicion/.test(t.textContent)) return 'invalida';
       return false;
     });
     if (!r) throw new Error(`o jogo não respondeu à palavra ${word}`);
@@ -397,36 +397,48 @@ class Side {
     this.q('opts').innerHTML = options.map(o => `<tr class="${o.id === chosen ? 'pick' : ''}">
       <td class="w">${esc(o.word)}${o.id === code ? ' <span class="tag" title="escolha do código">código</span>' : ''}</td>
       <td>${o.pode_ser_a_resposta === 'sim' ? '<span class="tag ok">sim</span>' : 'não'}</td>
-      <td>${esc(o.frequencia)}</td><td class="n">${esc(o.informacao_esperada_bits)}</td><td>${esc(o.opcoes_restantes_em_media)}</td></tr>`).join('');
+      <td class="n">${esc(o.informacao_esperada_bits)}</td><td>${esc(o.opcoes_restantes_em_media)}</td>
+      <td class="n">${esc(o.pontuacao_heuristica)}</td><td>${esc(o.chance_de_acertar_agora)}</td></tr>`).join('');
   }
 
-  // Joga um jogo inteiro; devolve o registro no mesmo formato do jogar.mjs.
-  async play(cfg, n, entries) {
-    const backend = this.backend;
+  // Clica em Jogar e espera o jogo gravar um az-cur novo (o jogo pode carregar o
+  // dicionário antes). Devolve o estado completo (com a chave), só para conferir
+  // que os dois lados têm o mesmo tamanho e a mesma palavra.
+  async begin() {
     const play = await waitFor(() => this.doc.getElementById('play'));
     if (!play) throw new Error('botão #play não encontrado');
-    this.log(`Jogo ${n} · ${BACKEND_LABEL[backend.name]} (${backend.model})`, 'game');
     play.click();
+    const s = await waitFor(() => { const x = this.rawState(); return x && x.secret && !x.done && !x.guesses.length ? x : null; }, 30000, 50);
+    if (!s) throw new Error('o jogo não começou');
+    return s;
+  }
+
+  // Joga um jogo inteiro (já começado com begin); devolve o registro no mesmo formato do jogar.mjs.
+  async play(cfg, n, D) {
+    const backend = this.backend;
+    this.log(`Jogo ${n} · ${BACKEND_LABEL[backend.name]} (${backend.model}) · ${D.n} letras`, 'game');
     this.clock.start(); // "tempo desde o start"
     const moves = [];
     let S = this.readState();
     if (!S || S.done || S.guesses.length) throw new Error('o jogo não começou limpo');
+    const len = S.len;
     while (!S.done) {
       if (stopping) throw new Error('interrompido');
       const round = S.guesses.length + 1;
       this.facts({ fMove: `${round} de ${cfg.tries}`, fLat: '…' });
-      const cands = candidates(entries, S.guesses);
-      const ranked = S.guesses.length === 0 ? openers.get(cfg.v + cfg.len) : rankGuesses(entries, cands);
-      const options = describeOptions(ranked, cands, cfg.k);
+      const sug = S.guesses.length === 0 && openers.has(cfg.v + len) ? openers.get(cfg.v + len) : suggest(D, S.guesses, cfg.v);
+      const cands = sug.cands;
+      if (!cands.length) throw new Error('nenhuma palavra do dicionário combina com as cores');
+      const options = describeOptions(sug, cfg.k);
       const ids = options.map(o => o.id);
-      const ctx = { state: describeState(S, cands, entries.length), options, ids, codeChoice: ids[0] };
+      const ctx = { state: describeState(S, cands.length, D.keys.length, sug.mode), options, ids, codeChoice: ids[0] };
       this.facts({ fCands: fmt(cands.length) });
       this.renderOptions(options, null, ctx.codeChoice);
       this.q('choice').hidden = true;
       this.state(`${BACKEND_LABEL[backend.name]} escolhendo entre ${ids.length} opções…`);
 
       const r = await pick(backend, ctx);
-      const motivo = r.motivo ?? (backend.name === 'code' ? 'maior informação esperada' : null);
+      const motivo = r.motivo ?? (backend.name === 'code' ? (sug.mode === 'heuristica' ? 'maior pontuação heurística' : 'maior informação esperada') : null);
       const chosenWord = options.find(o => o.id === r.id)?.word ?? String(r.id).toUpperCase();
       this.renderOptions(options, r.id, ctx.codeChoice);
       this.facts({ fLat: `${fmt(r.latencyMs)} ms` });
@@ -439,7 +451,7 @@ class Side {
       let res = await this.submitWord(word, S.guesses.length);
       if (res === 'invalida') {
         invalidWord = true;
-        await this.clearRow(cfg.len);
+        await this.clearRow(len);
         word = ctx.codeChoice;
         res = await this.submitWord(word, S.guesses.length);
         if (res !== 'ok') throw new Error(`palavra recusada duas vezes: ${word}`);
@@ -448,7 +460,7 @@ class Side {
         word, latencyMs: r.latencyMs, invalid: r.invalid || invalidWord,
         ...(invalidWord ? { palavraRecusada: r.id } : {}),
         tokens: { entrada: r.tokensIn, saida: r.tokensOut },
-        candidatesBefore: cands.length, opcoes: ids.length,
+        candidatesBefore: cands.length, modoSolver: sug.mode, opcoes: ids.length,
         igualAoCodigo: !r.invalid && r.id === ctx.codeChoice,
         ...(r.motivo ? { motivo: r.motivo } : {}),
         ...(r.erro ? { erro: r.erro } : {}),
@@ -471,7 +483,7 @@ class Side {
     this.state(`Fim do jogo ${n}: ${S.won ? 'vitória' : 'derrota'} em ${S.guesses.length}/${cfg.tries}.`);
     const game = {
       jogo: n, data: new Date().toISOString(), url: GAME_URL,
-      backend: backend.name, model: backend.model, len: cfg.len, variant: cfg.v, tries: cfg.tries,
+      backend: backend.name, model: backend.model, len, ...(S.modo ? { modo: S.modo } : {}), variant: cfg.v, tries: cfg.tries,
       won: !!S.won, tentativas: S.guesses.length,
       guesses: S.guesses.map(g => ({ word: g.word, key: g.key, res: g.res })),
       secret, tempoTotalMs,
@@ -527,7 +539,7 @@ function renderResults() {
   const sideLine = (s, g) => `<span class="lbl">${SIDE_LABEL[s]}</span><span><span class="tag ${g.won ? 'ok' : 'bad'}">${g.won ? 'vitória' : 'derrota'} ${g.tentativas}/${g.tries}</span>
     <span class="seq">${esc(g.guesses.map(x => x.word.toUpperCase()).join(' › '))} · ${secs(g.tempoTotalMs)} · ${esc(BACKEND_LABEL[g.backend] || g.backend)}</span></span>`;
   $('games').innerHTML = games.length ? games.slice().reverse().map(d => `<li>
-    <div class="head"><b>#${d.jogo}</b><span>segredo <span class="sec">${esc(d.segredo)}</span></span>
+    <div class="head"><b>#${d.jogo}</b><span>segredo <span class="sec">${esc(d.segredo)}</span>${d.len ? ` · ${d.len} letras${d.modo === 'extremo' ? ' (Extremo)' : ''}` : ''}</span>
       <span>${d.vencedor === 'empate' ? '<b>empate</b>' : `vence <b>${SIDE_LABEL[d.vencedor]}</b>`} (${esc(d.criterio)})</span>
       <span class="help">terminou primeiro: ${SIDE_LABEL[d.primeiroATerminar]}</span></div>
     ${sideLine('esquerda', d.lados.esquerda)}${sideLine('direita', d.lados.direita)}</li>`).join('')
@@ -577,10 +589,17 @@ $('start').addEventListener('click', async () => {
       sides.forEach(s => { s.badge(''); s.state('Carregando o jogo…'); });
       $('runState').textContent = `Jogo ${i + 1} de ${cfg.jogos}…`;
       await loadBoth(cfg, seed);
-      const entries = getEntries(JSON.parse(sides[0].doc.getElementById('words').textContent), cfg.v, cfg.len);
+      // começa os dois jogos; com a mesma semente o tamanho e a palavra têm de ser iguais
+      const st = await Promise.all(sides.map(s => s.begin()));
+      if (st[0].len !== st[1].len || st[0].key !== st[1].key) {
+        sides.forEach(s => s.log(`Erro: os lados sortearam jogos diferentes (${st[0].len} e ${st[1].len} letras); jogo descartado.`, 'err'));
+        continue;
+      }
+      sides.forEach(s => s.state('Carregando o dicionário…'));
+      const D = await prepare(cfg.v, st[0].len);
       // os dois lados começam juntos, cada um no seu laço assíncrono
       let first = null;
-      const settled = await Promise.allSettled(sides.map(s => s.play(cfg, n, entries).then(r => {
+      const settled = await Promise.allSettled(sides.map(s => s.play(cfg, n, D).then(r => {
         s.badge(first ? 'terminou em 2º' : 'terminou primeiro', first ? '' : 'first');
         first ??= s.name;
         return r;
@@ -595,7 +614,7 @@ $('start').addEventListener('click', async () => {
       const [a, b] = settled.map(x => x.value.game);
       if (a.secret !== b.secret) sides.forEach(s => s.log(`Aviso: segredos diferentes (${a.secret} / ${b.secret}).`, 'err'));
       games.push({
-        jogo: n, data: new Date().toISOString(), seed, segredo: a.secret, len: cfg.len, variant: cfg.v, tries: cfg.tries,
+        jogo: n, data: new Date().toISOString(), seed, segredo: a.secret, len: a.len, ...(a.modo ? { modo: a.modo } : {}), variant: cfg.v, tries: cfg.tries,
         ...duelWinner(a, b), primeiroATerminar: first,
         lados: { esquerda: a, direita: b },
       });

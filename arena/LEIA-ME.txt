@@ -16,9 +16,9 @@ index.html           página para assistir: dois agentes jogam lado a lado
 servir.mjs           servidor local da página (raiz do repositório) com
                      proxies /ollama e /typesafe (sem CORS, chave no servidor)
 jogar.mjs            linha de comando: abre o jogo (Playwright), joga e mede
-solver.mjs           lógica pura: norm, score (igual ao jogo), buildList,
-                     candidates, rankGuesses (entropia), describeOptions,
-                     describeState
+solver.mjs           lógica pura: norm, score (igual ao jogo), loadDict
+                     (dicionario/<n>.json), candidates, suggest (entropia ou
+                     heurística), describeOptions, describeState
 backends/index.mjs   contrato comum: pick(backend, contexto); funciona no Node
                      e no navegador (create(opts) aceita baseUrl, apiKey e
                      model; o que faltar vem das variáveis de ambiente)
@@ -28,6 +28,8 @@ backends/jev.mjs     TypeSafe "System One" (o "Jev" do jev-tetris)
 test/mock-ollama.mjs servidor falso de /api/chat, para testes sem modelo
 test/mock-jev.mjs    servidor falso de /v1/systemone, para testes sem chave
 resultados/          um arquivo .jsonl por execução (um jogo por linha)
+../dicionario/       os dicionários que o jogo usa, um por tamanho (4 a 13);
+                     o solver lê o mesmo arquivo que o jogo
 
 
 INSTALAÇÃO
@@ -51,6 +53,8 @@ também dá: npm run jogar -- --backend code --jogos 3
 
 Linha de base (sem rede, sem modelo):
   node arena/jogar.mjs --backend code --jogos 3 --local
+  node arena/jogar.mjs --backend code --jogos 3 --local --letras 9
+  node arena/jogar.mjs --backend code --jogos 3 --local --letras extremo
 
 Modelo local com Ollama (padrão qwen3.5:9b):
   ollama pull qwen3.5:9b
@@ -67,7 +71,9 @@ TypeSafe / Jev:
 Opções:
   --backend code|ollama|jev   quem escolhe as jogadas (padrão code)
   --jogos N                   quantos jogos (padrão 3)
-  --letras 4|5|6              tamanho da palavra (padrão 5)
+  --letras 4..9|extremo       tamanho da palavra (padrão 5). "extremo" grava
+                              az-prefs2.len = 'x' e o jogo sorteia 10 a 13
+                              letras; o tamanho real é lido de az-cur.len
   --variante pt|br            Portugal ou Brasil (padrão pt)
   --tentativas 4|6|10         Difícil, Normal, Fácil (padrão 6)
   --url URL                   endereço do jogo (padrão https://datm83.github.io/Azulejo/)
@@ -101,11 +107,11 @@ ASSISTIR PELO NAVEGADOR
 A página arena/index.html mostra um duelo, como o jev-tetris: dois agentes
 jogam ao mesmo tempo, lado a lado, com a MESMA palavra secreta em cada jogo.
 Cada lado tem o seu backend (Código, Ollama ou Jev; por padrão Jev à
-esquerda e Ollama qwen3.5:9b à direita); letras, variante, dificuldade,
+esquerda e Ollama qwen3.5:9b à direita); letras (4 a 9 ou Extremo), variante, dificuldade,
 número de jogos, ritmo e opções por jogada valem para os dois. Cada lado
-mostra o jogo, um cronômetro "tempo desde o start" (começa no clique em
-Jogar e para durante as pausas de ritmo e entre as letras digitadas, que só
-servem para ver), a jogada, as palavras possíveis, a tabela de opções que o
+mostra o jogo, um cronômetro "tempo desde o start" (começa quando o jogo
+começou e o dicionário daquele tamanho está carregado, e para durante as
+pausas de ritmo e entre as letras digitadas, que só servem para ver), a jogada, as palavras possíveis, a tabela de opções que o
 modelo vê, a escolha com motivo e latência, e o registro de jogadas. O placar
 mostra, por lado, vitórias, média de tentativas, tempo médio, latência média,
 respostas inválidas, concordância com o código e tokens, e os jogos vencidos
@@ -120,8 +126,11 @@ vez e põe em cada iframe uma cópia via srcdoc (mesma origem, por isso a
 página digita e lê o estado), com um script injetado antes do jogo que troca
 o localStorage por um armazenamento em memória (os lados não se apagam e os
 dados do jogador real não são tocados) e o Math.random por um gerador com
-semente (mulberry32). A mesma semente nos dois lados faz o jogo sortear a
-mesma palavra; cada jogo usa uma semente nova.
+semente (mulberry32). A mesma semente nos dois lados faz o jogo sortear o
+mesmo tamanho (no Extremo) e a mesma palavra; cada jogo usa uma semente
+nova. Depois do clique em Jogar a página confere que os dois lados têm o
+mesmo tamanho e a mesma palavra (sem mostrá-la; se não tiverem, o jogo é
+descartado) e só então carrega dicionario/<n>.json, uma vez por tamanho.
 
 Rodar localmente (Node 20+, sem dependências):
   node arena/servir.mjs                 (porta 8080; --porta N ou PORT=N)
@@ -169,44 +178,69 @@ PLAYWRIGHT_GLOBAL   caminho do pacote playwright, se não estiver em arena/node_
 COMO FUNCIONA CADA JOGO
 -----------------------
 1. Abre um contexto novo do navegador. Antes de a página carregar, grava em
-   localStorage az-prefs2 = {v, len, tries} e apaga o jogo em curso (az-cur),
-   para o botão #play começar sempre um jogo novo.
-2. Clica em #play. Nesse instante começa o relógio do jogo (tempo depois do
-   start).
+   localStorage az-prefs2 = {v, len, tries} (len = 4..9 ou 'x' para o
+   Extremo) e apaga o jogo em curso (az-cur), para o botão #play começar
+   sempre um jogo novo.
+2. Clica em #play e espera o jogo gravar um az-cur novo. Lê o tamanho real
+   (az-cur.len; no Extremo, 10 a 13) e carrega o dicionário desse tamanho:
+   com --local, do disco (dicionario/<n>.json); senão, de
+   <url>/dicionario/<n>.json. Fica em cache. Nesse instante começa o relógio
+   do jogo (tempo depois do start).
 3. A cada rodada lê az-cur SEM a palavra secreta (os campos secret e key são
-   removidos ainda dentro da página), filtra as palavras ainda possíveis
-   (candidatas), calcula para cada palavra da lista a informação esperada
-   (entropia das cores que ela produziria) e monta as K melhores opções.
-   Se restam até K candidatas, todas entram nas opções; senão entram pelo
-   menos as duas mais comuns.
+   removidos ainda dentro da página) e filtra as palavras ainda possíveis
+   (candidatas: chaves sem acento do dicionário compatíveis com todas as
+   cores). O jogo sorteia a palavra com chance igual entre TODAS as palavras
+   do dicionário daquele tamanho, então cada candidata tem chance 1/N e não
+   há ordem de frequência. As sugestões:
+   - até 2 candidatas: elas mesmas;
+   - até 2500: informação esperada (entropia das cores, em bits), avaliando
+     como palpite cada candidata e, com até 600 candidatas, também até 1500
+     outras palavras do dicionário (as que melhor dividem as candidatas pelas
+     letras), porque às vezes uma "sonda" que não pode ser a resposta separa
+     melhor;
+   - mais de 2500 (por exemplo a primeira jogada em qualquer tamanho):
+     heurística de letras. Para cada candidata soma, por letra distinta,
+     quantas candidatas têm essa letra e, por posição, quantas têm a mesma
+     letra ali; mostra-se dividida por N (letras e posições que se espera
+     acertar). Só candidatas entram, e não há bits.
+   As candidatas são listadas pela mesma heurística (as mais "típicas"
+   primeiro). Monta as K melhores opções; se restam até K candidatas, todas
+   entram nas opções; senão entram pelo menos as duas mais típicas.
 4. Cada opção tem sempre os mesmos campos, em palavras, por exemplo:
      { "id": "serao", "word": "SERÃO", "pode_ser_a_resposta": "sim",
-       "frequencia": "muito comum", "informacao_esperada_bits": "6,3",
-       "opcoes_restantes_em_media": "cerca de 35 de 1776",
-       "chance_de_acertar_agora": "1 em 1776" }
-   frequencia é o terço da lista (ordenada por frequência) onde a palavra está.
-   O jogo sorteia a palavra secreta com chance igual entre todas as da lista.
+       "informacao_esperada_bits": "não calculada",
+       "opcoes_restantes_em_media": "não calculada",
+       "pontuacao_heuristica": "2,76",
+       "chance_de_acertar_agora": "1 em 12476" }
+     { "id": "elemi", "word": "ELEMI", "pode_ser_a_resposta": "não",
+       "informacao_esperada_bits": "4,37",
+       "opcoes_restantes_em_media": "cerca de 11 de 156",
+       "pontuacao_heuristica": "não calculada",
+       "chance_de_acertar_agora": "nenhuma" }
+   Os campos que o modo da rodada não calcula dizem "não calculada". O estado
+   (describeState) diz também como as opções foram calculadas.
 5. O backend escolhe um id. A palavra é digitada com o teclado do Playwright
    (letras + Enter), como uma pessoa faria. O harness espera a tentativa
    aparecer em az-cur ou o aviso "Essa palavra não está no dicionário".
 6. Repete até o jogo terminar. Só então lê a palavra secreta, para o registro.
 
-Todas as opções vêm da lista de palavras secretas do próprio jogo, que estão
-todas no dicionário; por isso o backend code nunca recebe o aviso de palavra
-inválida. Se um backend escolher algo inválido, o harness apaga a linha e
+Todas as opções vêm do dicionário do próprio jogo (dicionario/<n>.json),
+por isso o backend code nunca recebe o aviso de palavra inválida. Se um backend escolher algo inválido, o harness apaga a linha e
 digita a escolha do código.
 
 
 O QUE É MEDIDO
 --------------
 Por jogo (uma linha JSON em resultados/<backend>-<data>.jsonl):
-  backend, model, len, variant, tries, won, tentativas, guesses (palavra e
-  cores), secret (lido só depois do fim), tempoTotalMs (do clique em #play
-  até o fim), tempoModeloMs (soma das latências do modelo) e moves.
+  backend, model, len (tamanho real), modo ("extremo", se for o caso),
+  variant, tries, won, tentativas, guesses (palavra e cores), secret (lido
+  só depois do fim), tempoTotalMs (do jogo pronto, com o dicionário
+  carregado, até o fim), tempoModeloMs (soma das latências do modelo) e
+  moves.
 Por jogada (moves):
   word, latencyMs (tempo da chamada ao backend), invalid, tokens
   {entrada, saida}, candidatesBefore (palavras possíveis antes da jogada),
-  opcoes, igualAoCodigo (o modelo escolheu o mesmo que o código?), motivo e
+  modoSolver (entropia ou heuristica), opcoes, igualAoCodigo (o modelo escolheu o mesmo que o código?), motivo e
   erro quando houver.
 
 Resposta inválida: erro de rede ou HTTP, JSON ilegível, escolha fora da lista
@@ -227,7 +261,7 @@ DESENHO (COMO NO JEV-TETRIS)
   calcula o que cada palavra revelaria. O modelo não precisa soletrar nem
   lembrar regras; só julga entre poucas opções bem descritas.
 - Todas as opções têm os mesmos campos, com números traduzidos em palavras
-  quando ajuda ("muito comum", "cerca de 35 de 1776").
+  quando ajuda ("cerca de 11 de 156", "1 em 156", "não calculada").
 - A resposta é restrita: no Ollama, um JSON Schema com enum dos ids; na
   TypeSafe, uma pergunta do tipo "choice" cujos critérios são as opções.
 - O backend code é a linha de base: mostra o teto do que as opções permitem
@@ -248,5 +282,14 @@ mesmos campos que o Ollama recebe), e não um texto corrido.
 Outras observações:
 - Rodar no endereço publicado depende de o navegador ter acesso à internet;
   em redes com proxy, use --local.
-- O tempo total inclui o cálculo do código (a primeira jogada de cada
-  tamanho/variante leva alguns décimos de segundo e depois fica em cache).
+- O tempo total inclui o cálculo do código (cada sugestão leva de alguns
+  milissegundos a poucos décimos de segundo; a primeira jogada de cada
+  tamanho/variante fica em cache). Carregar o dicionário (até ~1 MB, uma vez
+  por tamanho) não entra no tempo.
+- Dicionários: dicionario/index.json lista os tamanhos e as contagens;
+  dicionario/<n>.json = {n, w, br, x}: w são as palavras sorteáveis (com
+  acentos, grafia de Portugal; a chave é a forma sem acentos e pode
+  repetir-se: pais / país), br a grafia do Brasil das que só mudam o acento
+  e x chaves extras aceitas como tentativa mas nunca sorteadas. O solver usa
+  as chaves de w como candidatas e mostra as formas acentuadas (a do Brasil
+  com a variante br).

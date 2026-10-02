@@ -4,7 +4,7 @@ ASSISTENTE DO AZULEJO (bookmarklet)
 assistente.js     código-fonte legível
 empacotar.py      gera bookmarklet.txt a partir de assistente.js
 bookmarklet.txt   o mesmo código empacotado como endereço "javascript:" para
-                  colar num favorito do navegador
+                  colar num favorito do navegador (uma linha só)
 
 Como usar
 1. Copie o conteúdo inteiro de bookmarklet.txt (também dá para colar o código
@@ -13,15 +13,32 @@ Como usar
    tudo e cole o código. Dê um nome, ex.: "Assistente Azulejo".
 3. Abra o jogo no navegador (não no app instalado), comece uma partida e toque
    no favorito. Aparece um painel no canto com:
-   - a melhor próxima tentativa (maior informação esperada, em bits)
-   - as palavras ainda possíveis, ordenadas por frequência, com a chance de cada
-   - um botão "Jogar" que digita a palavra no jogo por você
+   - as melhores próximas tentativas: com até 2500 palavras possíveis, pela
+     informação esperada (em bits), podendo sugerir uma "sonda" que não é a
+     resposta mas separa melhor as possíveis; com mais de 2500 (por exemplo
+     na primeira jogada), pela pontuação de letras mais comuns entre as
+     possíveis (média de letras e posições que se espera acertar)
+   - as palavras ainda possíveis (as 40 primeiras, das mais "típicas" para as
+     menos), com o total e a chance de cada uma (~X% cada: o jogo sorteia a
+     palavra com chance igual entre todas as do dicionário daquele tamanho)
+   - um botão "Jogar" que digita a palavra no jogo por você (se a linha já
+     tiver letras, apaga antes)
    O painel atualiza sozinho a cada tentativa. Toque no favorito de novo para fechar.
+   Funciona em todos os tamanhos (4 a 9 letras e Extremo, 10 a 13).
 
 O que ele lê
-- localStorage "az-cur": tentativas feitas e as cores devolvidas pelo jogo
-- a lista de palavras embutida na página (<script id="words">)
+- localStorage "az-cur": tamanho, variante, tentativas feitas e as cores
+  devolvidas pelo jogo
+- o dicionário daquele tamanho, dicionario/<n>.json, buscado no mesmo
+  endereço do jogo (uma vez por tamanho; enquanto carrega o painel mostra
+  "Carregando dicionário…"; o maior, de 10 letras, tem cerca de 1 MB)
 Ele nunca lê nem mostra a palavra secreta.
 
 Para regenerar bookmarklet.txt depois de editar assistente.js:
   python3 assistente/empacotar.py
+O empacotador remove os comentários de bloco e junta tudo numa linha; por
+isso assistente.js não pode ter comentários de linha (//) e todas as
+instruções terminam com ponto e vírgula. O sinal de por cento vira o escape
+%, que só funciona dentro de textos (não use o operador de resto).
+O bloco entre /*CORE*/ e /*END CORE*/ é o mesmo de arena/solver.mjs e da
+página do resolvedor; ao mudar a lógica, mude nos três.
