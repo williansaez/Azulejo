@@ -104,6 +104,11 @@ button:focus-visible{outline:2px solid var(--cobalt);outline-offset:2px}
 .tile.cur{border-color:var(--cobalt);box-shadow:0 0 0 2px var(--cobalt) inset}
 .row.active .tile{cursor:pointer}
 .hint{font-size:12px;color:var(--muted);text-align:center;margin:-6px 0 0}
+/* modo Invisível: linhas de tamanho livre, alinhadas à esquerda; 13 casas cabem num ecrã de 360 px */
+.board.inv{--t2:min(44px, calc((min(100vw,560px) - 32px - 12*4px)/13));display:flex;flex-direction:column;gap:4px;width:calc(13*var(--t2) + 12*4px);max-width:100%}
+.board.inv .row{display:flex;justify-content:flex-start;gap:4px;min-height:var(--t2)}
+.board.inv .tile{flex:none;font-size:calc(var(--t2)*.55);border-width:1.5px;border-radius:4px}
+.board.inv .tile.ok::after,.board.inv .tile.near::after,.board.inv .tile.off::after{inset:2px}
 .row.active .tile{background:var(--surface)}
 .tile.ok,.tile.near,.tile.off{color:var(--on-color);border-color:transparent}
 .tile.off,.key.off{color:var(--off-ink);text-shadow:0 1px 1px rgba(90,20,20,.35)}
@@ -218,6 +223,7 @@ button:focus-visible{outline:2px solid var(--cobalt);outline-offset:2px}
         <button class="choice" id="l8" data-v="8"><b>8</b><span id="n8"></span></button>
         <button class="choice" id="l9" data-v="9"><b>9</b><span id="n9"></span></button>
         <button class="choice span" id="lx" data-v="x"><b>Extremo</b><span id="nx">10 a 13 letras, aleatório</span></button>
+        <button class="choice span" id="li" data-v="i"><b>Invisível</b><span id="ni">não sabe quantas letras tem; só quais letras existem</span></button>
       </div></div>
 
     <div class="opt"><h2>Dificuldade</h2>
@@ -239,10 +245,12 @@ button:focus-visible{outline:2px solid var(--cobalt);outline-offset:2px}
       <p>A palavra secreta é sorteada de todo o dicionário do tamanho escolhido, por isso pode ser rara. No modo Extremo, cada jogo tem de 10 a 13 letras, ao acaso.</p>
       <p>Acentos e ç são preenchidos sozinhos. As letras podem repetir-se.</p>
       <p>Na última tentativa aparece uma dica: uma letra da palavra, no lugar certo, numa casa que ainda não ficou verde. A dica não altera os pontos.</p>
+      <p>No modo Invisível não se sabe quantas letras tem a palavra (de 4 a 9). Escreva palavras de 4 a 13 letras: cada letra fica <b style="color:var(--near)">amarela</b> se existe na palavra secreta e <b style="color:var(--off)">vermelha</b> se não existe, sem dizer o lugar. Na última tentativa, a dica é o número de letras.</p>
       <h2>Pontuação</h2>
       <p>Cada palavra certa soma pontos à sua série. A série acaba quando falhar uma palavra, e o total conta para o recorde.</p>
       <table class="ptable"><tbody>
         <tr><td>Pontos base</td><td>4 letras 100, +50 por letra (13 letras 550)</td></tr>
+        <tr><td>Invisível</td><td>+50% sobre a base (4 letras 150, 9 letras 525)</td></tr>
         <tr><td>Multiplicador</td><td>Fácil ×1 · Normal ×2 · Difícil ×3</td></tr>
         <tr><td>Tentativas</td><td>quanto menos usar, mais pontos</td></tr>
       </tbody></table>
@@ -262,7 +270,7 @@ button:focus-visible{outline:2px solid var(--cobalt);outline-offset:2px}
     <div class="status"><span id="info"></span><span id="left"></span></div>
     <div class="status"><span class="score"><span class="pill" id="runPts">0 pts</span><span id="runWords"></span></span><span id="recLine"></span></div>
     <div class="board-wrap" id="boardWrap"><div class="toast" id="toast" hidden></div><div class="dica-live" id="dica" aria-live="polite"></div><div class="board" id="board"></div></div>
-    <div class="legend"><span><i style="background:var(--ok)"></i>Lugar certo</span><span><i style="background:var(--near)"></i>Existe, noutro lugar</span><span><i style="background:var(--off)"></i>Não existe</span></div>
+    <div class="legend" id="legend"><span><i style="background:var(--ok)"></i>Lugar certo</span><span><i style="background:var(--near)"></i>Existe, noutro lugar</span><span><i style="background:var(--off)"></i>Não existe</span></div>
     <p class="hint" id="hint">Toque numa casa para escrever nessa posição.</p>
     <section class="end" id="end" hidden></section>
     <div class="kb" id="kb"></div>
@@ -279,6 +287,7 @@ button:focus-visible{outline:2px solid var(--cobalt);outline-offset:2px}
 (function(){
 const norm = w => w.replace(/ç/g,'c').normalize('NFD').replace(/[̀-ͯ]/g,'');
 const LENS = [4,5,6,7,8,9], XMIN = 10, XMAX = 13;
+const IMIN = 4, IMAX = 13; // modo Invisível: tamanho de cada tentativa (o segredo tem 4 a 9 letras)
 const LBL = {10:'Fácil',6:'Normal',4:'Difícil'}, VLBL={pt:'Portugal',br:'Brasil'};
 const store = {get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
 const $ = id => document.getElementById(id);
@@ -310,7 +319,7 @@ function showForm(k, v){ const D=DICT[k.length]; if(!D) return k; return (v==='b
 let prefs = store.get('az-prefs2',{v:'pt',len:5,tries:6});
 if(!prefs || typeof prefs!=='object') prefs={v:'pt',len:5,tries:6};
 if(!['pt','br'].includes(prefs.v)) prefs.v='pt';
-if(!LENS.includes(prefs.len) && prefs.len!=='x') prefs.len=5;
+if(!LENS.includes(prefs.len) && prefs.len!=='x' && prefs.len!=='i') prefs.len=5;
 if(![4,6,10].includes(prefs.tries)) prefs.tries=6;
 if(prefs.kb!==undefined && !['tela','nativo'].includes(prefs.kb)) delete prefs.kb;
 // Ecrãs táteis: usa o teclado do próprio aparelho (campo #typer), salvo se o jogador pedir o teclado desenhado.
@@ -319,13 +328,15 @@ const nativeKb = () => COARSE && prefs.kb!=='tela';
 let S = store.get('az-cur', null), screen = 'home';
 let RUN = store.get('az-run', {pts:0, words:0});
 function save(){ store.set('az-cur', S); store.set('az-run', RUN); }
-const BASE = len => 50*(len-2), MULT={10:1,6:2,4:3};
-function points(len, tries, used){ return Math.round(BASE(len)*MULT[tries]*(tries-used+1)/tries); }
+// Invisível: base do tamanho real da palavra com bónus de 50%
+const BASE = (len, inv) => inv ? Math.round(1.5*50*(len-2)) : 50*(len-2), MULT={10:1,6:2,4:3};
+function points(len, tries, used, inv){ return Math.round(BASE(len, inv)*MULT[tries]*(tries-used+1)/tries); }
+const isInv = () => !!S && S.modo==='invisivel';
 function getRec(){ return store.get('az-rec',{best:0,top:[]}); }
 
 /* ---------- home ---------- */
 function inProgress(){ return S && !S.done && S.guesses.length>0; }
-const sLen = s => s.modo==='extremo' ? 'x' : s.len;
+const sLen = s => s.modo==='extremo' ? 'x' : s.modo==='invisivel' ? 'i' : s.len;
 function differs(){ return S && (S.v!==prefs.v || sLen(S)!==prefs.len || S.tries!==prefs.tries); }
 let busy = false;
 function renderHome(){
@@ -335,6 +346,8 @@ function renderHome(){
   LENS.forEach(n=>{ const c=count(n); $('n'+n).textContent = c==null ? '' : fmt(c)+' palavras'; });
   let tx=0; for(let n=XMIN;n<=XMAX;n++){ const c=count(n); if(c==null){ tx=null; break; } tx+=c; }
   $('nx').textContent = '10 a 13 letras, aleatório' + (tx==null ? '' : ' · '+fmt(tx)+' palavras');
+  let ti=0; for(const n of LENS){ const c=count(n); if(c==null){ ti=null; break; } ti+=c; }
+  $('ni').textContent = 'não sabe quantas letras tem; só quais letras existem' + (ti==null ? '' : ' · '+fmt(ti)+' palavras');
   const st=store.get('az-stats',{played:0,won:0,streak:0,best:0});
   $('homeStats').innerHTML = statsHTML(st);
   const cont = S && !S.done && !differs();
@@ -342,8 +355,11 @@ function renderHome(){
   $('play').textContent = busy ? 'Carregando dicionário…' : cont ? 'Continuar jogo' : (RUN.words ? 'Próxima palavra' : 'Jogar');
   $('warn').hidden = !(inProgress() && differs());
   const u = Math.max(1, Math.round(prefs.tries/3));
-  const pts = used => prefs.len==='x' ? `de ${fmt(points(XMIN,prefs.tries,used))} a ${fmt(points(XMAX,prefs.tries,used))} pontos` : `${fmt(points(prefs.len,prefs.tries,used))} pontos`;
-  $('example').innerHTML = `Com as opções escolhidas, acertar à ${u}.ª tentativa vale <b>${pts(u)}</b>; à 1.ª vale ${pts(1)}${prefs.len==='x'?', conforme o tamanho da palavra':''}.`;
+  const pts = used => prefs.len==='x' ? `de ${fmt(points(XMIN,prefs.tries,used))} a ${fmt(points(XMAX,prefs.tries,used))} pontos`
+    : prefs.len==='i' ? `de ${fmt(points(LENS[0],prefs.tries,used,true))} a ${fmt(points(LENS[LENS.length-1],prefs.tries,used,true))} pontos`
+    : `${fmt(points(prefs.len,prefs.tries,used))} pontos`;
+  const varia = prefs.len==='x'||prefs.len==='i';
+  $('example').innerHTML = `Com as opções escolhidas, acertar à ${u}.ª tentativa vale <b>${pts(u)}</b>; à 1.ª vale ${pts(1)}${varia?', conforme o tamanho da palavra':''}.`;
   const R=getRec();
   $('record').innerHTML = `<div class="record-top"><div><span>Melhor série</span><br><b>${fmt(R.best)}</b></div>
     <div class="run">Série atual: <b>${fmt(RUN.pts)} pts</b> · ${RUN.words} ${RUN.words===1?'palavra':'palavras'}</div></div>
@@ -352,7 +368,7 @@ function renderHome(){
 function statsHTML(st){ const pct=st.played?Math.round(st.won*100/st.played):0;
   return `<div><b>${st.played}</b><span>Jogos</span></div><div><b>${pct}%</b><span>Vitórias</span></div><div><b>${st.streak}</b><span>Sequência</span></div><div><b>${st.best}</b><span>Melhor</span></div>`; }
 function choose(id, field, parse){ $(id).addEventListener('click',e=>{ const b=e.target.closest('.choice'); if(!b) return; prefs[field]=parse(b.dataset.v); store.set('az-prefs2',prefs); renderHome(); }); }
-choose('optVar','v',x=>x); choose('optLen','len',x=>x==='x'?'x':Number(x)); choose('optDiff','tries',Number);
+choose('optVar','v',x=>x); choose('optLen','len',x=>x==='x'||x==='i'?x:Number(x)); choose('optDiff','tries',Number);
 $('play').onclick=async()=>{
   if(busy) return;
   if(S && !S.done && !differs()){
@@ -395,10 +411,11 @@ function forfeit(){ recordStats(false); endRun(); S.done=true; save(); }
 /* ---------- game ---------- */
 async function newGame(){
   if(busy) return;
-  const modo = prefs.len==='x' ? 'extremo' : null;
+  const modo = prefs.len==='x' ? 'extremo' : prefs.len==='i' ? 'invisivel' : null;
   // As duas escolhas usam Math.random(), por esta ordem (tamanho e depois palavra),
   // antes de esperar pelo dicionário: a arena semeia Math.random para duas cópias sortearem igual.
-  const L = modo ? XMIN + Math.floor(Math.random()*(XMAX-XMIN+1)) : prefs.len;
+  const L = modo==='extremo' ? XMIN + Math.floor(Math.random()*(XMAX-XMIN+1))
+    : modo==='invisivel' ? LENS[0] + Math.floor(Math.random()*LENS.length) : prefs.len;
   const r = Math.random();
   if(!DICT[L] && !(await withLoading(()=>loadLen(L)))) return;
   if(inProgress() && !S.done) forfeit();
@@ -408,8 +425,9 @@ async function newGame(){
   store.set('az-last',[secret,...last].slice(0,60));
   const key = norm(secret);
   if(prefs.v==='br' && DICT[L].br.get(key)) secret = DICT[L].br.get(key);
-  S = {v:prefs.v, len:L, tries:prefs.tries, secret, key, guesses:[], cur:Array(L).fill(''), pos:0, done:false, won:false};
+  S = {v:prefs.v, len:L, tries:prefs.tries, secret, key, guesses:[], cur:modo==='invisivel' ? [] : Array(L).fill(''), pos:0, done:false, won:false};
   if(modo) S.modo = modo;
+  invWait = null;
   lastEnd=null; save();
   show('game');
 }
@@ -426,7 +444,44 @@ function toast(msg, ms=1800){ const t=$(screen==='game'?'toast':'toastHome'); t.
 
 function render(flipRow=-1){
   fixCur(); renderDica();
-  const b=$('board'); b.style.setProperty('--cols',S.len); b.style.setProperty('--rows',S.tries);
+  const b=$('board');
+  b.classList.toggle('inv', isInv());
+  if(isInv()) renderInv(b, flipRow); else renderGrid(b, flipRow);
+  const inv=isInv();
+  $('info').innerHTML = inv ? `<b>Invisível</b> · ${LBL[S.tries]} · ${VLBL[S.v]}` : `<b>${S.modo==='extremo'?'Extremo · ':''}${S.len} letras</b> · ${LBL[S.tries]} · ${VLBL[S.v]}`;
+  $('hint').textContent = inv ? 'O tamanho é segredo: escreva palavras de 4 a 13 letras.' : 'Toque numa casa para escrever nessa posição.';
+  const lg = inv ? 'inv' : 'std';
+  if($('legend').dataset.m!==lg){ $('legend').dataset.m=lg; $('legend').innerHTML = inv
+    ? '<span><i style="background:var(--near)"></i>Existe na palavra</span><span><i style="background:var(--off)"></i>Não existe</span>'
+    : '<span><i style="background:var(--ok)"></i>Lugar certo</span><span><i style="background:var(--near)"></i>Existe, noutro lugar</span><span><i style="background:var(--off)"></i>Não existe</span>'; }
+  $('left').innerHTML = S.done ? '' : `Faltam <b>${S.tries - S.guesses.length}</b> de ${S.tries}`;
+  $('runPts').textContent = fmt(RUN.pts)+' pts';
+  $('runWords').textContent = RUN.words ? `série de ${RUN.words} ${RUN.words===1?'palavra':'palavras'}` : 'nova série';
+  $('recLine').innerHTML = `Recorde <b>${fmt(getRec().best)}</b>`;
+  renderKb(); renderEnd();
+}
+// Invisível: cada linha enviada tem as letras dessa tentativa; a linha ativa tem as letras escritas e uma casa vazia (cursor).
+function renderInv(b, flipRow){
+  b.classList.remove('wide'); b.innerHTML='';
+  for(let r=0;r<S.tries;r++){
+    const row=document.createElement('div'); row.className='row';
+    const g=S.guesses[r]; const active = !S.done && r===S.guesses.length;
+    if(g){
+      for(let c=0;c<g.key.length;c++){
+        const t=document.createElement('div'); t.className='tile '+g.res[c]; t.textContent=g.word[c]||g.key[c];
+        if(r===flipRow){ t.classList.add('flip'); t.style.animationDelay=(c*110)+'ms'; }
+        row.appendChild(t);
+      }
+    } else if(active){
+      row.classList.add('active');
+      S.cur.forEach(ch=>{ const t=document.createElement('div'); t.className='tile filled'; t.textContent=ch; row.appendChild(t); });
+      if(S.cur.length<IMAX){ const t=document.createElement('div'); t.className='tile cur'; t.setAttribute('aria-label','Próxima letra'); row.appendChild(t); }
+    }
+    b.appendChild(row);
+  }
+}
+function renderGrid(b, flipRow){
+  b.style.setProperty('--cols',S.len); b.style.setProperty('--rows',S.tries);
   b.style.setProperty('--gap', S.len>=10 ? '4px' : '6px'); b.classList.toggle('wide', S.len>=10);
   b.innerHTML='';
   for(let r=0;r<S.tries;r++){
@@ -441,16 +496,12 @@ function render(flipRow=-1){
     }
     b.appendChild(row);
   }
-  $('info').innerHTML = `<b>${S.modo==='extremo'?'Extremo · ':''}${S.len} letras</b> · ${LBL[S.tries]} · ${VLBL[S.v]}`;
-  $('left').innerHTML = S.done ? '' : `Faltam <b>${S.tries - S.guesses.length}</b> de ${S.tries}`;
-  $('runPts').textContent = fmt(RUN.pts)+' pts';
-  $('runWords').textContent = RUN.words ? `série de ${RUN.words} ${RUN.words===1?'palavra':'palavras'}` : 'nova série';
-  $('recLine').innerHTML = `Recorde <b>${fmt(getRec().best)}</b>`;
-  renderKb(); renderEnd();
 }
 // Dica da última tentativa: uma letra da palavra no lugar certo, numa casa que nenhuma tentativa pôs verde.
 // Sorteada uma vez e guardada em S.dica = {pos, ch}, para não mudar ao recarregar.
+// No modo Invisível a dica é o número de letras: S.dica = {len}.
 function renderDica(){
+  if(isInv()) return showDica(dicaInv());
   if(S.dica && !(Number.isInteger(S.dica.pos) && S.dica.pos>=0 && S.dica.pos<S.len && S.dica.ch===S.key[S.dica.pos])) delete S.dica;
   let html='';
   if(!S.done && S.guesses.length===S.tries-1){
@@ -460,6 +511,15 @@ function renderDica(){
     }
     if(S.dica) html=`<div class="hintbox">Última tentativa. Dica: a ${S.dica.pos+1}.ª letra é <span class="dl">${S.dica.ch.toUpperCase()}</span>.</div>`;
   }
+  showDica(html);
+}
+function dicaInv(){
+  if(S.dica && S.dica.len!==S.len) delete S.dica;
+  if(S.done || S.guesses.length!==S.tries-1) return '';
+  if(!S.dica){ S.dica={len:S.len}; save(); }
+  return `<div class="hintbox">Última tentativa. Dica: a palavra tem <span class="dl">${S.len}</span> letras.</div>`;
+}
+function showDica(html){
   const el=$('dica');
   if(el.dataset.h!==html){ el.dataset.h=html; el.innerHTML=html; } // só mexe quando muda (leitores de ecrã)
   $('game').classList.toggle('hashint', !!html);
@@ -468,7 +528,8 @@ const ROWS=['qwertyuiop','asdfghjklç','zxcvbnm'], ABC='abcçdefghijklmnopqrstuv
 const STLBL={ok:'lugar certo',near:'noutro lugar',off:'não existe'};
 function renderKb(){
   const st={}; const rank={off:1,near:2,ok:3};
-  S.guesses.forEach(g=>g.key.split('').forEach((ch,i)=>{ const v=g.res[i]; if(!st[ch]||rank[v]>rank[st[ch]]) st[ch]=v; }));
+  const inv=isInv(); // Invisível: só "existe" (near) ou "não existe" (off), mesmo depois de acertar
+  S.guesses.forEach(g=>g.key.split('').forEach((ch,i)=>{ let v=g.res[i]; if(inv && v==='ok') v='near'; if(!st[ch]||rank[v]>rank[st[ch]]) st[ch]=v; }));
   // faixa "letras usadas" (só informação), mostrada no lugar do teclado desenhado nos ecrãs táteis
   $('usadas').innerHTML = ABC.split('').map(ch=>{ const s=ch==='ç'?'':st[ch]||''; return `<span class="chip${s?' '+s:''}">${ch}${s?`<span class="sr"> (${STLBL[s]})</span>`:''}</span>`; }).join('');
   const kb=$('kb'); kb.innerHTML='';
@@ -479,7 +540,7 @@ function renderKb(){
     if(ri===2) row.appendChild(mk('Backspace','Apagar','wide'));
     kb.appendChild(row);
   });
-  function mk(v,label,cls){ const k=document.createElement('button'); k.className='key'+(cls?' '+cls:''); k.textContent=label; k.dataset.k=v; k.tabIndex=-1; k.setAttribute('aria-label',v==='Backspace'?'Apagar letra':v==='Enter'?'Enviar palavra':'Letra '+label); return k; }
+  function mk(v,label,cls){ const k=document.createElement('button'); k.className='key'+(cls?' '+cls:''); k.textContent=label; k.dataset.k=v; k.tabIndex=-1; if(v==='Enter' && invWait) k.disabled=true; k.setAttribute('aria-label',v==='Backspace'?'Apagar letra':v==='Enter'?'Enviar palavra':'Letra '+label); return k; }
 }
 function renderEnd(){
   const e=$('end');
@@ -507,6 +568,11 @@ function renderEnd(){
 }
 function shake(){ const r=$('board').children[S.guesses.length]; if(!r) return; r.classList.remove('shake'); void r.offsetWidth; r.classList.add('shake'); }
 function fixCur(){
+  if(isInv()){ // Invisível: S.cur só tem as letras escritas (4 a 13), sempre acrescentadas no fim
+    let c = typeof S.cur==='string' ? S.cur.split('') : Array.isArray(S.cur) ? S.cur : [];
+    S.cur = c.filter(x=>typeof x==='string' && /^[a-z]$/.test(x)).slice(0,IMAX);
+    S.pos=S.cur.length; return;
+  }
   if(typeof S.cur==='string'){ const s=S.cur; S.cur=Array(S.len).fill(''); s.split('').slice(0,S.len).forEach((c,i)=>S.cur[i]=c); S.pos=Math.min(s.length,S.len-1); }
   if(!Array.isArray(S.cur)||S.cur.length!==S.len) S.cur=Array(S.len).fill('');
   if(typeof S.pos!=='number') S.pos=S.cur.findIndex(c=>!c); if(S.pos<0) S.pos=S.len-1;
@@ -514,6 +580,7 @@ function fixCur(){
 function press(k){
   if(!S || S.done || screen!=='game') return;
   fixCur();
+  if(isInv()) return pressInv(k);
   if(k==='Enter') return submit();
   if(k==='ArrowLeft'){ S.pos=Math.max(0,S.pos-1); return render(); }
   if(k==='ArrowRight'){ S.pos=Math.min(S.len-1,S.pos+1); return render(); }
@@ -532,6 +599,35 @@ function press(k){
     save(); render();
   }
 }
+// Invisível: letras acrescentam no fim, Apagar tira a última, Enter envia; setas e Delete não fazem nada.
+function pressInv(k){
+  if(k==='Enter') return submitInv();
+  if(k==='Backspace'){ if(S.cur.length){ S.cur.pop(); S.pos=S.cur.length; save(); render(); } return; }
+  if(k.length!==1) return;
+  const ch=norm(k.toLowerCase());
+  if(/^[a-z]$/.test(ch) && S.cur.length<IMAX){ S.cur.push(ch); S.pos=S.cur.length; save(); render(); }
+}
+let invWait = null; // tamanho cujo dicionário está a carregar (Enviar fica desativado)
+function submitInv(){
+  if(invWait) return;
+  const n=S.cur.length, g=S.cur.join('');
+  if(n<IMIN){ toast('Escreva pelo menos 4 letras'); return shake(); }
+  const won = g===S.key;
+  const D=DICT[n];
+  if(!won && !D){
+    invWait=n; toast('Carregando dicionário…', 0); render();
+    const s0=S;
+    loadLen(n).then(()=>{ invWait=null; $('toast').hidden=true; if(S===s0 && !S.done && screen==='game' && S.cur.join('')===g){ render(); submitInv(); } else if(S===s0) render(); },
+      ()=>{ invWait=null; toast('Não foi possível carregar o dicionário.', 3500); if(S===s0) render(); });
+    return;
+  }
+  if(!won && !D.valid.has(g)){ toast('Essa palavra não está no dicionário'); return shake(); }
+  // cada letra: existe na palavra (near) ou não (off); nunca o lugar. Ao acertar, a linha fica toda verde.
+  const res = won ? Array(n).fill('ok') : S.cur.map(ch=>S.key.includes(ch) ? 'near' : 'off');
+  const word = won ? S.secret : disp(g);
+  S.guesses.push({key:g, word, res}); S.cur=[]; S.pos=0;
+  finish(S.guesses.length-1, won);
+}
 function submit(){
   if(S.cur.some(c=>!c)){ toast('Preencha todas as casas'); S.pos=S.cur.findIndex(c=>!c); render(); return shake(); }
   const g=S.cur.join('');
@@ -541,15 +637,17 @@ function submit(){
   const res=score(g,S.key);
   const word = g===S.key ? S.secret : disp(g);
   S.guesses.push({key:g, word, res}); S.cur=Array(S.len).fill(''); S.pos=0;
-  const row=S.guesses.length-1;
-  if(res.every(x=>x==='ok')){ S.done=true; S.won=true; }
+  finish(S.guesses.length-1, res.every(x=>x==='ok'));
+}
+function finish(row, won){
+  if(won){ S.done=true; S.won=true; }
   else if(S.guesses.length>=S.tries){ S.done=true; }
   if(S.done){
     recordStats(S.won);
     if(S.won){
-      const used=S.guesses.length, gain=points(S.len,S.tries,used);
+      const inv=isInv(), used=S.guesses.length, gain=points(S.len,S.tries,used,inv);
       RUN.pts+=gain; RUN.words++;
-      lastEnd={gain, calc:`${BASE(S.len)} (${S.len} letras) × ${MULT[S.tries]} (${LBL[S.tries]}) × ${S.tries-used+1}/${S.tries} (tentativas)`};
+      lastEnd={gain, calc:`${BASE(S.len,inv)} (${S.len} letras${inv?', Invisível +50%':''}) × ${MULT[S.tries]} (${LBL[S.tries]}) × ${S.tries-used+1}/${S.tries} (tentativas)`};
     } else lastEnd=endRun();
   }
   save();

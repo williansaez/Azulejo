@@ -37,6 +37,10 @@ Android
 Depois de aberta uma vez, a app funciona sem internet.
 No telemóvel usa-se o teclado do aparelho ("Mostrar teclado na tela" repõe o desenhado).
 Na última tentativa aparece uma dica com uma letra no lugar certo.
+Modo Invisível: a palavra tem de 4 a 9 letras, mas o tamanho não é
+mostrado. Escreve-se palavras de 4 a 13 letras e cada letra fica amarela
+(existe na palavra) ou vermelha (não existe), sem dizer o lugar. A dica
+da última tentativa é o número de letras. Vale +50% de pontos.
 
 3) ATUALIZAR A APP
   Substitua os ficheiros no site e, em sw.js, mude VERSION
@@ -49,7 +53,8 @@ A palavra secreta é sorteada ao acaso entre TODAS as palavras do
 dicionário com o tamanho escolhido (não de uma lista de palavras
 frequentes). Tamanhos: 4, 5, 6, 7, 8 ou 9 letras, ou Extremo, que em
 cada jogo escolhe ao acaso um tamanho de 10 a 13 letras e depois uma
-palavra desse tamanho. A opção Grafia (Portugal / Brasil) só muda os
+palavra desse tamanho, ou Invisível, que faz o mesmo com 4 a 9 letras
+(cada tentativa é validada no ficheiro do seu próprio tamanho). A opção Grafia (Portugal / Brasil) só muda os
 acentos com que a palavra é mostrada (fénix / fênix).
 
 Ficheiros em dicionario/

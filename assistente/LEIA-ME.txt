@@ -25,6 +25,8 @@ Como usar
      tiver letras, apaga antes)
    O painel atualiza sozinho a cada tentativa. Toque no favorito de novo para fechar.
    Funciona em todos os tamanhos (4 a 9 letras e Extremo, 10 a 13).
+   Ainda não suporta o modo Invisível: durante um jogo nesse modo o painel
+   só mostra "Modo Invisível: o assistente ainda não suporta este modo.".
 
 O que ele lê
 - localStorage "az-cur": tamanho, variante, tentativas feitas e as cores

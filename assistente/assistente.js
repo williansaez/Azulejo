@@ -197,6 +197,7 @@
   var last='', memo={};
   function update(force){
     var S=get('az-cur'), b=root.querySelector('#az-asst-b'), t=root.querySelector('#az-asst-t');
+    if(S&&S.modo==='invisivel'){ if(last!=='invisivel'){ last='invisivel'; t.textContent='Assistente · Invisível'; b.innerHTML='<p>Modo Invisível: o assistente ainda não suporta este modo.</p>'; } return; }
     var sig=S?JSON.stringify([S.v,S.len,S.guesses,S.done,!!ready[S.len]]):'none';
     if(!force&&sig===last) return; last=sig;
     if(!S||!S.secret||!S.len){ t.textContent='Assistente'; b.innerHTML='<p>Comece um jogo e o painel atualiza sozinho.</p>'; return; }
