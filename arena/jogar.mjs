@@ -2,9 +2,12 @@
 // Arena do Azulejo das Palavras: um backend de IA joga no navegador real
 // (Playwright) e medimos vitórias, tentativas, tempo e latência por jogada.
 //
-//   node arena/jogar.mjs --backend code|ollama|jev [--jogos 3] [--letras 4..9|extremo]
+//   node arena/jogar.mjs --backend code|ollama|jev [--jogos 3] [--letras 4..9|extremo|invisivel]
 //     [--variante pt|br] [--tentativas 6] [--url URL] [--local]
-//     [--model qwen3.5:9b] [--opcoes 8] [--visivel] [--ritmo MS] [--saida arena/resultados]
+//     [--model qwen3.5:9b] [--opcoes 8] [--pensar] [--visivel] [--ritmo MS] [--saida arena/resultados]
+//
+// --letras invisivel é o modo livre: o modelo inventa cada palavra (livre.mjs),
+// sem opções do código; só o backend ollama joga.
 
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
@@ -14,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadDict, suggest, describeOptions, describeState } from './solver.mjs';
 import { loadBackend, pick } from './backends/index.mjs';
+import * as Livre from './livre.mjs';
 
 const ARENA_DIR = path.dirname(fileURLToPath(import.meta.url));
 const GAME_DIR = path.resolve(ARENA_DIR, '..');
@@ -30,6 +34,7 @@ const { values: a } = parseArgs({
     local: { type: 'boolean', default: false },
     model: { type: 'string' },
     opcoes: { type: 'string', default: '8' },
+    pensar: { type: 'boolean', default: false },
     visivel: { type: 'boolean', default: false },
     ritmo: { type: 'string' },
     saida: { type: 'string' },
@@ -45,16 +50,19 @@ if (a.ajuda) {
 const ritmo = a.ritmo != null ? Math.max(0, parseInt(a.ritmo, 10) || 0) : (a.visivel ? 900 : 0);
 const letras = String(a.letras).toLowerCase();
 const extremo = ['extremo', 'x'].includes(letras);
+const livre = ['invisivel', 'invisível', 'i', 'livre'].includes(letras);
 const cfg = {
   backend: a.backend,
   jogos: Math.max(1, parseInt(a.jogos, 10) || 1),
-  len: extremo ? 'x' : Number(letras), // valor de az-prefs2.len: 4..9 ou 'x' (Extremo, 10 a 13 sorteado pelo jogo)
+  // valor de az-prefs2.len: 4..9, 'x' (Extremo, 10 a 13 sorteado pelo jogo) ou
+  // 'i' (Invisível: 4 a 9 sorteado e escondido; modo livre)
+  len: extremo ? 'x' : livre ? 'i' : Number(letras),
   v: a.variante,
   tries: Number(a.tentativas),
   k: Math.max(2, parseInt(a.opcoes, 10) || 8),
 };
-if (!extremo && ![4, 5, 6, 7, 8, 9].includes(cfg.len)) fail('--letras deve ser 4 a 9 ou extremo');
-const lenLabel = extremo ? 'Extremo (10 a 13 letras)' : `${cfg.len} letras`;
+if (!extremo && !livre && ![4, 5, 6, 7, 8, 9].includes(cfg.len)) fail('--letras deve ser 4 a 9, extremo ou invisivel');
+const lenLabel = extremo ? 'Extremo (10 a 13 letras)' : livre ? 'invisível (livre): 4 a 9 letras, tamanho escondido' : `${cfg.len} letras`;
 if (!['pt', 'br'].includes(cfg.v)) fail('--variante deve ser pt ou br');
 if (![4, 6, 10].includes(cfg.tries)) fail('--tentativas deve ser 4, 6 ou 10');
 const outDir = a.saida ? path.resolve(a.saida) : path.join(ARENA_DIR, 'resultados');
@@ -99,6 +107,20 @@ const readState = page => page.evaluate(() => {
   const { secret, key, ...rest } = s;
   return rest;
 });
+// Invisível: também sem len (o jogador não vê o tamanho). Tudo é removido
+// dentro da página; o Node nunca recebe estes campos antes do fim.
+const readStateFree = page => page.evaluate(() => {
+  const s = JSON.parse(localStorage.getItem('az-cur') || 'null');
+  if (!s) return null;
+  const { secret, key, len, ...rest } = s;
+  return rest;
+});
+// Estado completo, só depois de done (para o registro).
+const readFinal = page => page.evaluate(() => {
+  const s = JSON.parse(localStorage.getItem('az-cur') || 'null');
+  if (!s || !s.done) throw new Error('o jogo ainda não terminou');
+  return { secret: s.secret, len: s.len, key: s.key };
+});
 
 // Digita a palavra e espera: 'ok' (tentativa registada) ou 'invalida' (toast do dicionário).
 async function submitWord(page, word, prevCount) {
@@ -116,14 +138,42 @@ async function submitWord(page, word, prevCount) {
 }
 async function clearRow(page, len) { for (let i = 0; i < len + 1; i++) await page.keyboard.press('Backspace'); }
 
+// Invisível: digita (letras + Enter) e espera a tentativa entrar em az-cur.
+// Se o dicionário daquele tamanho ainda não estava no jogo, aparece
+// "Carregando dicionário…" e o jogo envia sozinho quando acaba (até 15 s).
+// Devolve 'ok', 'invalida' (não está no dicionário), 'curta' ou 'erro'.
+async function submitFree(page, word, prevCount) {
+  await page.evaluate(() => { const t = document.getElementById('toast'); if (t) t.hidden = true; });
+  await page.keyboard.type(word);
+  await page.keyboard.press('Enter');
+  const look = (allowLoading) => page.waitForFunction(([prev, allowLoading]) => {
+    const s = JSON.parse(localStorage.getItem('az-cur') || 'null');
+    if (s && s.guesses.length > prev) return 'ok';
+    const t = document.getElementById('toast');
+    const msg = t && !t.hidden ? t.textContent : '';
+    if (/não está no dicion/.test(msg)) return 'invalida';
+    if (/pelo menos 4 letras/.test(msg)) return 'curta';
+    if (/Não foi possível carregar/.test(msg)) return 'erro';
+    if (allowLoading && /Carregando dicion/.test(msg)) return 'carregando';
+    return false;
+  }, [prevCount, allowLoading], { timeout: allowLoading ? 10000 : 15000, polling: 20 }).then(h => h.jsonValue());
+  let r = await look(true);
+  if (r === 'carregando') r = await look(false); // espera o envio automático depois da carga
+  return r;
+}
+
 // Dicionário do tamanho sorteado: do disco com --local, senão de <url>/dicionario/<n>.json.
 // Fica em cache (loadDict) e a primeira jogada também (openers), por tamanho e variante.
 const openers = new Map();
 function getDict(n, url) {
   return a.local ? loadDict(n, { rootDir: GAME_DIR }) : loadDict(n, { root: url, fetchImpl: fetch });
 }
+function getAllDicts(url) {
+  return Livre.loadAllDicts(a.local ? { rootDir: GAME_DIR } : { root: url, fetchImpl: fetch });
+}
 
 async function playGame(browser, url, backend, n) {
+  if (livre) return playFreeGame(browser, url, backend, n);
   const context = await browser.newContext({ serviceWorkers: 'block' });
   try {
     await context.addInitScript(prefs => {
@@ -181,6 +231,7 @@ async function playGame(browser, url, backend, n) {
         candidatesBefore: cands.length, modoSolver: sug.mode, opcoes: ids.length,
         igualAoCodigo: !r.invalid && r.id === ctx.codeChoice,
         ...(r.motivo ? { motivo: r.motivo } : {}),
+        ...(r.thinkTokens ? { thinkTokens: r.thinkTokens } : {}),
         ...(r.erro ? { erro: r.erro } : {}),
       });
       if (r.erro && process.env.ARENA_DEBUG) console.error(`  [jogada ${moves.length}] ${r.erro}`);
@@ -204,12 +255,84 @@ async function playGame(browser, url, backend, n) {
   }
 }
 
+
+// ---------- modo livre (Invisível) ----------
+// O modelo inventa cada palavra a partir do estado visível (livre.mjs). O
+// harness nunca lê len, secret nem key antes de done: readStateFree remove
+// esses campos dentro da página e Livre.assertHidden confere a cada rodada.
+async function playFreeGame(browser, url, backend, n) {
+  const context = await browser.newContext({ serviceWorkers: 'block' });
+  try {
+    await context.addInitScript(prefs => {
+      localStorage.setItem('az-prefs2', JSON.stringify(prefs));
+      localStorage.setItem('az-cur', 'null');
+    }, { v: cfg.v, len: 'i', tries: cfg.tries });
+    const page = await context.newPage();
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#play');
+    // todos os dicionários de 4 a 13 (cada palpite valida no do seu tamanho); em cache
+    const dicts = await getAllDicts(url);
+
+    await page.click('#play');
+    // espera um jogo novo (o jogo carrega o dicionário do segredo antes de gravar
+    // az-cur); só devolve true/false: nenhum campo escondido sai da página
+    await page.waitForFunction(() => {
+      const s = JSON.parse(localStorage.getItem('az-cur') || 'null');
+      return !!(s && s.modo === 'invisivel' && !s.done && s.guesses.length === 0);
+    }, null, { timeout: 30000, polling: 50 });
+    await page.evaluate(() => document.activeElement?.blur());
+    let S = Livre.assertHidden(await readStateFree(page));
+    if (!S || S.done || S.guesses.length) throw new Error('o jogo não começou limpo');
+    const campos = Object.keys(S).sort();
+    console.log(`  [jogo ${n}] estado visto pelo agente: ${campos.join(', ')} (sem ${Livre.HIDDEN.join('/')}: ${Livre.HIDDEN.every(k => !(k in S)) ? 'ok' : 'FALHOU'})`);
+    const t0 = Date.now();
+    let pausas = 0, leituras = 1;
+
+    const moves = [];
+    while (!S.done) {
+      if (stopping) throw new Error('interrompido');
+      const m = await Livre.freeMove(backend, S, { dicts, v: cfg.v });
+      let word = m.word, res = await submitFree(page, word, S.guesses.length);
+      const recusadasPeloJogo = [];
+      // não deveria acontecer (validamos com os mesmos dicionários), mas: apaga e sorteia outra
+      for (let k = 0; res !== 'ok' && k < 5; k++) {
+        recusadasPeloJogo.push({ palavra: word, resultado: res });
+        await clearRow(page, Livre.MAX);
+        word = Livre.randomWord(dicts, new Set([...S.guesses.map(g => g.key), ...recusadasPeloJogo.map(x => x.palavra)]));
+        m.fallback = true; m.word = word; m.display = Livre.displayFor(dicts.get(word.length), word, cfg.v);
+        res = await submitFree(page, word, S.guesses.length);
+      }
+      if (res !== 'ok') throw new Error(`o jogo recusou as palavras: ${recusadasPeloJogo.map(x => x.palavra).join(', ')}`);
+      moves.push(Livre.moveRecord(m, recusadasPeloJogo.length ? { recusadasPeloJogo } : {}));
+      if (process.env.ARENA_DEBUG) for (const p of m.propostas) if (!p.valida) console.error(`  [jogada ${moves.length}] ${p.palavra}: ${p.motivo_rejeicao}`);
+      S = Livre.assertHidden(await readStateFree(page)); leituras++;
+      if (ritmo) { await page.waitForTimeout(ritmo); pausas += ritmo; }
+    }
+    const tempoTotalMs = Date.now() - t0 - pausas;
+    if (ritmo) await page.waitForTimeout(ritmo * 3);
+    const fim = await readFinal(page); // só depois do fim: segredo e tamanho
+    return {
+      jogo: n, data: new Date().toISOString(), url,
+      backend: backend.name, model: backend.model, ...(backend.pensar ? { pensar: true } : {}),
+      len: fim.len, modo: 'invisivel', livre: true, variant: cfg.v, tries: cfg.tries,
+      won: !!S.won, tentativas: S.guesses.length,
+      guesses: S.guesses.map(g => ({ word: g.word, key: g.key, res: g.res })),
+      secret: fim.secret, tempoTotalMs,
+      tempoModeloMs: moves.reduce((s, m) => s + m.latencyMs, 0),
+      estadoVisto: { campos, leituras, semCamposEscondidos: true },
+      moves,
+    };
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 // ---------- resumo ----------
 const fmt = (x, d = 0) => x.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
 const secs = ms => `${fmt(ms / 1000, 2)} s`;
 function printSummary(games, backend) {
   console.log('');
-  console.log(`Resumo: backend ${backend.name} (${backend.model}), ${lenLabel}, variante ${cfg.v}, ${cfg.tries} tentativas`);
+  console.log(`Resumo: backend ${backend.name} (${backend.model}${backend.pensar ? ', pensar' : ''}), ${lenLabel}, variante ${cfg.v}, ${cfg.tries} tentativas`);
   if (!games.length) { console.log('  Nenhum jogo terminado.'); return; }
   const pad = (s, n) => String(s).padEnd(n);
   console.log('  ' + pad('#', 4) + pad('segredo', 16) + pad('letras', 8) + pad('resultado', 11) + pad('tentativas', 12) + pad('tempo total', 13) + 'tempo modelo');
@@ -222,6 +345,29 @@ function printSummary(games, backend) {
   const inv = moves.filter(m => m.invalid).length;
   const agree = moves.filter(m => m.igualAoCodigo).length;
   const tin = moves.reduce((s, m) => s + m.tokens.entrada, 0), tout = moves.reduce((s, m) => s + m.tokens.saida, 0);
+  const think = moves.reduce((s, m) => s + (m.thinkTokens || 0), 0);
+  if (livre) {
+    const props = moves.reduce((s, m) => s + m.propostas.length, 0);
+    const rej = moves.reduce((s, m) => s + m.invalid, 0);
+    const fb = moves.filter(m => m.fallback).length;
+    const rowsL = [
+      ['Jogos', games.length],
+      ['Vitórias', `${won.length} (${fmt(100 * won.length / games.length)}%)`],
+      ['Média de tentativas (todos)', fmt(games.reduce((s, g) => s + g.tentativas, 0) / games.length, 2)],
+      ['Média de tentativas (vitórias)', won.length ? fmt(won.reduce((s, g) => s + g.tentativas, 0) / won.length, 2) : '-'],
+      ['Tempo médio total por jogo', secs(games.reduce((s, g) => s + g.tempoTotalMs, 0) / games.length)],
+      ['Latência média por jogada', `${fmt(moves.reduce((s, m) => s + m.latencyMs, 0) / moves.length, 1)} ms (todas as propostas)`],
+      ['Jogadas', moves.length],
+      ['Propostas do modelo', props],
+      ['Propostas rejeitadas', `${rej} (${fmt(100 * rej / Math.max(1, props))}% das propostas)`],
+      ['Jogadas por sorteio (fallback)', `${fb} (${fmt(100 * fb / moves.length)}%)`],
+      ['Tokens entrada / saída', `${fmt(tin)} / ${fmt(tout)}`],
+      ['Tokens de raciocínio (aprox.)', fmt(think)],
+    ];
+    console.log('');
+    for (const [k, v] of rowsL) console.log('  ' + pad(k, 34) + v);
+    return;
+  }
   const rows = [
     ['Jogos', games.length],
     ['Vitórias', `${won.length} (${fmt(100 * won.length / games.length)}%)`],
@@ -233,6 +379,7 @@ function printSummary(games, backend) {
     ['Respostas inválidas', `${inv} (${fmt(100 * inv / moves.length)}%)`],
     ['Igual à escolha do código', `${agree} (${fmt(100 * agree / moves.length)}%)`],
     ['Tokens entrada / saída', `${fmt(tin)} / ${fmt(tout)}`],
+    ...(think ? [['Tokens de raciocínio (aprox.)', fmt(think)]] : []),
   ];
   console.log('');
   for (const [k, v] of rows) console.log('  ' + pad(k, 34) + v);
@@ -241,7 +388,13 @@ function printSummary(games, backend) {
 // ---------- principal ----------
 let stopping = false;
 async function main() {
-  const backend = await loadBackend(cfg.backend, { model: a.model });
+  const backend = await loadBackend(cfg.backend, { model: a.model, pensar: a.pensar });
+  if (livre && !backend.livre) {
+    let msg = 'este backend não joga no modo livre';
+    try { await backend.chooseFree({}); } catch (e) { msg = e.message; }
+    fail(`--backend ${backend.name} com --letras invisivel: ${msg}`);
+  }
+  if (a.pensar && backend.name !== 'ollama') console.warn('Aviso: --pensar só vale para o backend ollama; ignorado.');
   if (backend.name === 'jev' && !process.env.TYPESAFE_API_KEY) console.warn('Aviso: TYPESAFE_API_KEY não definida; todas as jogadas vão cair no código e contar como inválidas.');
   const { chromium } = await loadPlaywright();
   const server = a.local ? await serveLocal() : null;
@@ -277,7 +430,11 @@ async function main() {
       games.push(g);
       fs.appendFileSync(outFile, JSON.stringify(g) + '\n');
       const seq = g.guesses.map(x => x.word.toUpperCase()).join(' > ');
-      console.log(`  jogo ${i} (${g.len} letras): ${g.won ? 'vitória' : 'derrota'} em ${g.tentativas}/${g.tries} (${secs(g.tempoTotalMs)}) ${seq}  [segredo: ${g.secret}]`);
+      if (livre) {
+        const rej = g.moves.reduce((s, m) => s + m.invalid, 0), fb = g.moves.filter(m => m.fallback).length;
+        console.log(`  jogo ${i} (invisível (livre)): ${g.won ? 'vitória' : 'derrota'} em ${g.tentativas}/${g.tries} (${secs(g.tempoTotalMs)}) ${seq}  [segredo: ${g.secret}, ${g.len} letras; ${rej} propostas rejeitadas, ${fb} por sorteio]`);
+        g.moves.forEach((m, j) => console.log(`     ${j + 1}. ${m.palavra.toUpperCase()}${m.fallback ? ' (sorteio)' : ''} · ${m.latencyMs} ms · propostas: ${m.propostas.map(p => `${p.palavra ?? '∅'}${p.valida ? ' ✓' : ` ✗ (${p.motivo_rejeicao})`}`).join(', ')}${m.thinkTokens ? ` · raciocínio ~${m.thinkTokens} tokens` : ''}`));
+      } else console.log(`  jogo ${i} (${g.len} letras): ${g.won ? 'vitória' : 'derrota'} em ${g.tentativas}/${g.tries} (${secs(g.tempoTotalMs)}) ${seq}  [segredo: ${g.secret}]`);
     } catch (e) {
       if (stopping) break;
       console.error(`  jogo ${i}: erro: ${e.message}`);

@@ -7,6 +7,8 @@ levam. Segue o desenho do jev-tetris (github.com/trungdq88/jev-tetris):
 "primeiro o código". O código enumera as jogadas possíveis e simula o
 resultado de cada uma; o modelo só escolhe uma opção de uma lista curta,
 descrita em palavras. Mede-se a latência e o acerto de cada jogada.
+No modo Invisível a arena joga ao contrário, em "modo livre": o modelo
+inventa cada palavra sozinho (ver MODO INVISÍVEL (LIVRE) abaixo).
 
 
 ARQUIVOS
@@ -16,12 +18,15 @@ index.html           página para assistir: dois agentes jogam lado a lado
 servir.mjs           servidor local da página (raiz do repositório) com
                      proxies /ollama e /typesafe (sem CORS, chave no servidor)
 jogar.mjs            linha de comando: abre o jogo (Playwright), joga e mede
+livre.mjs            modo livre (Invisível): estado visível para o modelo,
+                     validação das propostas, novas tentativas e sorteio
 solver.mjs           lógica pura: norm, score (igual ao jogo), loadDict
                      (dicionario/<n>.json), candidates, suggest (entropia ou
                      heurística), describeOptions, describeState
-backends/index.mjs   contrato comum: pick(backend, contexto); funciona no Node
-                     e no navegador (create(opts) aceita baseUrl, apiKey e
-                     model; o que faltar vem das variáveis de ambiente)
+backends/index.mjs   contrato comum: pick(backend, contexto) e, no modo livre,
+                     pickFree(backend, contexto); funciona no Node e no
+                     navegador (create(opts) aceita baseUrl, apiKey, model e
+                     pensar; o que faltar vem das variáveis de ambiente)
 backends/code.mjs    linha de base: escolhe sempre a melhor opção do código
 backends/ollama.mjs  modelo local via Ollama (/api/chat)
 backends/jev.mjs     TypeSafe "System One" (o "Jev" do jev-tetris)
@@ -71,9 +76,12 @@ TypeSafe / Jev:
 Opções:
   --backend code|ollama|jev   quem escolhe as jogadas (padrão code)
   --jogos N                   quantos jogos (padrão 3)
-  --letras 4..9|extremo       tamanho da palavra (padrão 5). "extremo" grava
+  --letras 4..9|extremo|invisivel
+                              tamanho da palavra (padrão 5). "extremo" grava
                               az-prefs2.len = 'x' e o jogo sorteia 10 a 13
-                              letras; o tamanho real é lido de az-cur.len
+                              letras; o tamanho real é lido de az-cur.len.
+                              "invisivel" grava az-prefs2.len = 'i' e joga no
+                              modo livre (só --backend ollama; ver abaixo)
   --variante pt|br            Portugal ou Brasil (padrão pt)
   --tentativas 4|6|10         Difícil, Normal, Fácil (padrão 6)
   --url URL                   endereço do jogo (padrão https://datm83.github.io/Azulejo/)
@@ -81,6 +89,9 @@ Opções:
                               local (só módulo http do Node) e joga nela
   --model NOME                modelo do backend (ollama: qwen3.5:9b; jev: jev-latest)
   --opcoes K                  quantas opções o modelo vê por jogada (padrão 8)
+  --pensar                    ollama: manda think: true (modelos com raciocínio)
+                              e mede os tokens de raciocínio; por padrão
+                              think: false
   --visivel                   mostra o navegador (por padrão roda sem janela)
   --ritmo MS                  pausa em ms depois de cada jogada e no fim do jogo,
                               para dar tempo de ver; não conta no tempo medido
@@ -100,6 +111,14 @@ Testes com servidores falsos (provam o caminho de pedido e resposta):
   TYPESAFE_URL=http://127.0.0.1:8788 TYPESAFE_API_KEY=teste node arena/jogar.mjs --backend jev --jogos 1 --local
   Com MOCK_MODO=invalido os mocks devolvem uma escolha que não existe, para
   testar a queda para o código.
+  Modo livre com o mock (ele responde palavras comuns de uma lista fixa,
+  conferidas nos dicionários ao iniciar, sem repetir as já tentadas):
+  OLLAMA_URL=http://127.0.0.1:11435 node arena/jogar.mjs --backend ollama --letras invisivel --jogos 2 --local
+  Com MOCK_MODO=invalido o mock responde sempre "qzxwv" (3 propostas
+  recusadas e sorteio em toda jogada); com MOCK_MODO=misto erra a primeira
+  proposta de cada rodada e acerta a segunda. Com think: true o mock devolve
+  também message.thinking (teste do --pensar). O mock não sabe o segredo:
+  só acerta por acaso.
 
 
 ASSISTIR PELO NAVEGADOR
@@ -107,7 +126,8 @@ ASSISTIR PELO NAVEGADOR
 A página arena/index.html mostra um duelo, como o jev-tetris: dois agentes
 jogam ao mesmo tempo, lado a lado, com a MESMA palavra secreta em cada jogo.
 Cada lado tem o seu backend (Código, Ollama ou Jev; por padrão Jev à
-esquerda e Ollama qwen3.5:9b à direita); letras (4 a 9 ou Extremo), variante, dificuldade,
+esquerda e Ollama qwen3.5:9b à direita; no Ollama, "Pensar" manda
+think: true); letras (4 a 9, Extremo ou Invisível (modo livre)), variante, dificuldade,
 número de jogos, ritmo e opções por jogada valem para os dois. Cada lado
 mostra o jogo, um cronômetro "tempo desde o start" (começa quando o jogo
 começou e o dicionário daquele tamanho está carregado, e para durante as
@@ -266,6 +286,81 @@ DESENHO (COMO NO JEV-TETRIS)
   TypeSafe, uma pergunta do tipo "choice" cujos critérios são as opções.
 - O backend code é a linha de base: mostra o teto do que as opções permitem
   e serve de referência para a concordância.
+
+
+MODO INVISÍVEL (LIVRE)
+----------------------
+No Invisível o jogo sorteia uma palavra de 4 a 9 letras e esconde o tamanho;
+cada tentativa pode ser qualquer palavra do dicionário de 4 a 13 letras, e
+cada letra só diz "existe" (está em algum lugar da palavra) ou "não existe".
+Só na última tentativa o jogo mostra quantas letras a palavra tem.
+
+Diferença do "primeiro o código": aqui o código NÃO enumera candidatas, não
+calcula entropia nem sugere palavras. O modelo recebe só o que um jogador
+humano vê e inventa cada palpite. O ctx do modelo (pickFree/chooseFree) é:
+  { regras, rodada, tentativas (máximo),
+    historico: [{numero, palavra, letras: [{letra, estado: 'existe'|'não existe'}]}],
+    letras_que_existem, letras_que_nao_existem, palavras_ja_tentadas,
+    dica_tamanho (n na última tentativa, senão null),
+    tentativas_invalidas_nesta_rodada: [{palavra, motivo}] }
+O estado vem de az-cur SEM len, secret e key (removidos dentro da página;
+livre.mjs/assertHidden confere a cada leitura e o jogar.mjs imprime os
+campos vistos no início de cada jogo e grava estadoVisto no registro). O
+tamanho e a palavra só são lidos depois de done. No duelo os dois lados têm
+a mesma semente e, por isso, a mesma palavra; a página só confere isso
+depois que os dois terminam (se diferirem, o jogo é descartado).
+
+Quem joga: só o backend ollama (chooseFree). O Código e o Jev só escolhem
+entre opções dadas e não geram palavras: com --letras invisivel o jogar.mjs
+sai na hora com "este backend não joga no modo livre"; na página, ao
+escolher Invisível, os dois lados passam para Ollama (o modelo e a URL do
+campo ficam) e Código/Jev aparecem desativados com uma nota.
+
+Pedido ao Ollama: prompt de sistema em português com as regras, mensagem do
+usuário com o estado em linhas simples, e format = JSON Schema
+{palavra: string 4..16, motivo: string}. Com --pensar (ou "Pensar" na
+página) vai think: true; thinkTokens é uma aproximação: o /api/chat não
+separa os tokens de raciocínio, então usa-se eval_count vezes a fração de
+caracteres de message.thinking (se a API trouxer um campo próprio, ele é
+usado).
+
+Validação (no harness, livre.mjs, não no backend). Uma proposta é válida se,
+depois de norm (sem acentos e cedilha), for só letras a-z, tiver 4 a 13
+letras, estiver no dicionário do seu tamanho (dicionario/<n>.json, chaves
+de w e x, o mesmo que o jogo usa) e ainda não tiver sido tentada neste jogo.
+Se for recusada ("não está no dicionário", "já foi tentada", "tamanho fora
+de 4 a 13", "não é uma palavra só de letras"), o modelo é chamado de novo
+com tentativas_invalidas_nesta_rodada preenchida, até 3 propostas por
+jogada. Se as 3 falharem (ou derem erro de rede/JSON), a jogada é um
+SORTEIO (fallback): um tamanho de 4 a 13 ao acaso e, nele, uma palavra ao
+acaso ainda não tentada, sem filtrar pelas letras conhecidas (não é uma
+escolha informada). A palavra é digitada sem acentos (letras + Enter); se o
+dicionário daquele tamanho ainda não estava carregado no jogo, aparece
+"Carregando dicionário…" e o harness espera até 15 s pelo envio automático.
+Se mesmo assim o jogo recusasse a palavra, o harness apaga a linha e sorteia
+outra (não deveria acontecer: os dicionários são os mesmos).
+
+Métricas novas, por jogada (moves): word (o que foi digitado), palavra
+(forma acentuada do dicionário), invalid (quantas propostas foram recusadas
+nesta jogada), propostas [{palavra, valida, motivo_rejeicao?, motivo?}],
+fallback, thinkTokens, motivo, tokens {entrada, saida} e latencyMs (somados
+sobre todas as propostas da jogada). Por jogo: modo "invisivel", livre: true,
+pensar (se ligado), len e secret (lidos só no fim). O resumo do jogar.mjs
+mostra "Propostas do modelo", "Propostas rejeitadas", "Jogadas por sorteio
+(fallback)" e "Tokens de raciocínio (aprox.)", e cada jogo aparece como
+"invisível (livre)" com as propostas de cada jogada. Na página, o painel ao
+vivo troca a tabela de opções pela visão do modelo (letras que existem e
+que não existem, tentativas, dica de tamanho), as propostas da rodada com
+motivo, latência e tokens (recusadas em vermelho, com o motivo), e o
+registro mostra, por exemplo, "J3.2 PORTAL (2 propostas rejeitadas)
+1.240 ms · tokens …". O placar ganha "Propostas rejeitadas" e "Jogadas por
+sorteio" (e "Tokens de raciocínio" quando houver). Nas jogadas do modo
+livre, "Respostas inválidas" conta as jogadas com pelo menos uma proposta
+recusada e "Igual ao código" não se aplica (-).
+
+Exemplos:
+  node arena/jogar.mjs --backend ollama --letras invisivel --jogos 5 --local
+  node arena/jogar.mjs --backend ollama --model qwen3.5:9b --letras invisivel --pensar --jogos 3 --local
 
 
 AVISO SOBRE A TYPESAFE

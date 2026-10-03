@@ -41,6 +41,12 @@ export function create({ model, baseUrl, apiKey } = {}) {
   return {
     name: 'jev',
     model: name,
+    livre: false,
+    // System One responde perguntas do tipo "choice" (escolhe entre critérios
+    // dados); não gera texto livre, por isso não inventa palavras.
+    async chooseFree() {
+      throw new Error('este backend não joga no modo livre: o Jev (TypeSafe) só escolhe entre opções dadas e o modo Invisível (livre) exige gerar palavras. Use o backend ollama.');
+    },
     async choose(ctx) {
       if (!key && !viaProxy) throw new Error('TYPESAFE_API_KEY não definida');
       const body = buildRequest(ctx, name);

@@ -1,4 +1,8 @@
-// Backend Ollama (/api/chat) com saída estruturada: o modelo só escolhe um id.
+// Backend Ollama (/api/chat) com saída estruturada.
+//   choose(ctx)      primeiro o código: o modelo só escolhe um id da lista.
+//   chooseFree(ctx)  modo livre (Invisível): o modelo inventa a palavra.
+// opts.pensar = true manda think: true (modelos com raciocínio); por padrão
+// think: false.
 import { postJson, env } from './index.mjs';
 
 const SYSTEM = `Você está jogando "Azulejo das Palavras", um jogo de adivinhar palavras em português parecido com o Wordle.
@@ -23,44 +27,122 @@ function userMessage(ctx) {
   return lines.join('\n');
 }
 
-// opts: { model, baseUrl } (baseUrl pode ser relativo, ex.: /ollama via servir.mjs)
-export function create({ model, baseUrl } = {}) {
+// ---------- modo livre (Invisível) ----------
+// Nenhuma lista de palavras: só as regras e o que um jogador vê na tela.
+const SYSTEM_LIVRE = `Você está jogando "Azulejo das Palavras" no modo Invisível, um jogo de adivinhar uma palavra secreta em português.
+Regras:
+- A palavra secreta tem de 4 a 9 letras, mas o tamanho NÃO é mostrado (só na última tentativa o jogo revela quantas letras ela tem).
+- Cada tentativa pode ser qualquer palavra portuguesa do dicionário com 4 a 13 letras (não precisa ter o tamanho da secreta).
+- Depois de cada tentativa, cada letra da tentativa é marcada como "existe" (a letra aparece em algum lugar da palavra secreta) ou "não existe" (não aparece). A posição nunca é revelada.
+- Acentos e cedilha não contam (Á = A, Ç = C).
+- Você ganha quando escrever exatamente a palavra secreta. Há um número limitado de tentativas.
+Como jogar bem:
+- Use as letras que existem e evite as que não existem; tentativas no começo podem servir para descobrir letras.
+- Prefira palavras comuns do português.
+- Nunca repita uma palavra já tentada nem uma proposta já recusada.
+Responda APENAS com JSON no formato {"palavra": "<sua tentativa>", "motivo": "<frase curta>"}.
+A palavra deve ser UMA palavra portuguesa, sem espaços nem hífens; acentos são permitidos. Não escreva mais nada.`;
+
+const lista = xs => (xs.length ? xs.join(', ') : 'nenhuma');
+
+function userMessageLivre(ctx) {
+  const lines = [`Rodada ${ctx.rodada} (máximo de ${ctx.tentativas} tentativas).`, ctx.regras, ''];
+  if (ctx.historico.length) {
+    lines.push('Tentativas feitas:');
+    for (const h of ctx.historico) lines.push(`${h.numero}. ${h.palavra} → ${h.letras.map(l => `${l.letra}: ${l.estado}`).join('; ')}`);
+  } else lines.push('Ainda não houve tentativas.');
+  lines.push('');
+  lines.push(`Letras que existem na palavra secreta: ${lista(ctx.letras_que_existem)}.`);
+  lines.push(`Letras que não existem na palavra secreta: ${lista(ctx.letras_que_nao_existem)}.`);
+  lines.push(`Palavras já tentadas (não repita): ${lista(ctx.palavras_ja_tentadas)}.`);
+  lines.push(ctx.dica_tamanho ? `Dica da última tentativa: a palavra secreta tem ${ctx.dica_tamanho} letras.`
+    : 'O tamanho da palavra secreta não foi revelado (tem de 4 a 9 letras).');
+  if (ctx.tentativas_invalidas_nesta_rodada?.length) {
+    lines.push(`Propostas recusadas nesta rodada (não repita): ${ctx.tentativas_invalidas_nesta_rodada.map(t => `${t.palavra} (${t.motivo})`).join(', ')}.`);
+  }
+  lines.push('', 'Responda só com o JSON {"palavra": "...", "motivo": "..."}.');
+  return lines.join('\n');
+}
+
+const FORMAT_LIVRE = {
+  type: 'object',
+  properties: { palavra: { type: 'string', minLength: 4, maxLength: 16 }, motivo: { type: 'string' } },
+  required: ['palavra'],
+};
+
+// Tokens de raciocínio: o /api/chat do Ollama não separa (eval_count soma
+// raciocínio e resposta). Se um dia vier um campo próprio, usa-o; senão,
+// aproxima pela fração de caracteres do raciocínio em eval_count.
+function thinkTokensOf(json) {
+  const own = json?.thinking_eval_count ?? json?.thinking_count;
+  if (Number.isFinite(own)) return own;
+  const th = json?.message?.thinking;
+  if (typeof th !== 'string' || !th.length) return 0;
+  const out = json.eval_count ?? 0;
+  const content = json?.message?.content ?? '';
+  if (!out) return Math.ceil(th.length / 4);
+  return Math.max(1, Math.round(out * th.length / (th.length + content.length)));
+}
+
+// opts: { model, baseUrl, pensar } (baseUrl pode ser relativo, ex.: /ollama via servir.mjs)
+export function create({ model, baseUrl, pensar } = {}) {
   const base = (baseUrl || env.OLLAMA_URL || 'http://localhost:11434').replace(/\/$/, '');
   const name = model || 'qwen3.5:9b';
+  const think = !!pensar;
+  async function chat(format, system, user) {
+    const body = {
+      model: name,
+      stream: false,
+      think,
+      options: { temperature: 0 },
+      format,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
+    };
+    const r = await postJson(`${base}/api/chat`, body);
+    if (!r.ok) throw new Error(`Ollama HTTP ${r.status}: ${(r.text || '').slice(0, 200)}`);
+    const content = r.json?.message?.content;
+    if (typeof content !== 'string') throw new Error('resposta sem message.content');
+    let ans;
+    try { ans = JSON.parse(content); } catch { throw new Error(`conteúdo não é JSON: ${content.slice(0, 120)}`); }
+    const thinking = r.json?.message?.thinking;
+    return {
+      ans,
+      tokensIn: r.json.prompt_eval_count ?? 0,
+      tokensOut: r.json.eval_count ?? 0,
+      thinkTokens: think ? thinkTokensOf(r.json) : 0,
+      raw: think && typeof thinking === 'string' ? { content, thinkingChars: thinking.length } : content,
+    };
+  }
   return {
     name: 'ollama',
     model: name,
+    pensar: think,
+    livre: true,
     async choose(ctx) {
-      const body = {
-        model: name,
-        stream: false,
-        think: false,
-        options: { temperature: 0 },
-        format: {
-          type: 'object',
-          properties: { escolha: { type: 'string', enum: ctx.ids }, motivo: { type: 'string' } },
-          required: ['escolha'],
-        },
-        messages: [
-          { role: 'system', content: SYSTEM },
-          { role: 'user', content: userMessage(ctx) },
-        ],
+      const format = {
+        type: 'object',
+        properties: { escolha: { type: 'string', enum: ctx.ids }, motivo: { type: 'string' } },
+        required: ['escolha'],
       };
-      const r = await postJson(`${base}/api/chat`, body);
-      if (!r.ok) throw new Error(`Ollama HTTP ${r.status}: ${(r.text || '').slice(0, 200)}`);
-      const content = r.json?.message?.content;
-      if (typeof content !== 'string') throw new Error('resposta sem message.content');
-      let ans;
-      try { ans = JSON.parse(content); } catch { throw new Error(`conteúdo não é JSON: ${content.slice(0, 120)}`); }
+      const { ans, ...rest } = await chat(format, SYSTEM, userMessage(ctx));
       return {
         id: typeof ans?.escolha === 'string' ? ans.escolha.trim().toLowerCase() : ans?.escolha,
         motivo: ans?.motivo ?? null,
-        tokensIn: r.json.prompt_eval_count ?? 0,
-        tokensOut: r.json.eval_count ?? 0,
-        raw: content,
+        ...rest,
+      };
+    },
+    async chooseFree(ctx) {
+      const { ans, ...rest } = await chat(FORMAT_LIVRE, SYSTEM_LIVRE, userMessageLivre(ctx));
+      return {
+        word: typeof ans?.palavra === 'string' ? ans.palavra : null,
+        motivo: typeof ans?.motivo === 'string' ? ans.motivo : null,
+        ...rest,
       };
     },
   };
 }
 
-export { SYSTEM, userMessage };
+export { SYSTEM, userMessage, SYSTEM_LIVRE, userMessageLivre, FORMAT_LIVRE };
