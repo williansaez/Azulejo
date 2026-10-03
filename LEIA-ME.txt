@@ -35,6 +35,8 @@ Android
   (ou "Adicionar ao ecrã principal").
 
 Depois de aberta uma vez, a app funciona sem internet.
+No telemóvel usa-se o teclado do aparelho ("Mostrar teclado na tela" repõe o desenhado).
+Na última tentativa aparece uma dica com uma letra no lugar certo.
 
 3) ATUALIZAR A APP
   Substitua os ficheiros no site e, em sw.js, mude VERSION

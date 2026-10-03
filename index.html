@@ -87,10 +87,11 @@ button:focus-visible{outline:2px solid var(--cobalt);outline-offset:2px}
 .mark{width:28px;height:28px;flex:none}
 .status{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;gap:8px;flex-wrap:wrap}
 .status b{color:var(--ink);font-weight:600}
-.board-wrap{flex:1;display:flex;align-items:center;justify-content:center;min-height:0;position:relative}
+.board-wrap{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:0;position:relative}
 .board{--gap:6px;display:grid;gap:var(--gap);
+  --avail:calc(100dvh - 330px - var(--extra, 0px));
   --tw:calc((min(100vw - 32px, 560px) - (var(--cols) - 1)*var(--gap))/var(--cols));
-  --th:calc((100dvh - 330px - (var(--rows) - 1)*var(--gap))/var(--rows));
+  --th:calc((var(--avail) - (var(--rows) - 1)*var(--gap))/var(--rows));
   --t:min(58px, var(--tw), var(--th));--t2:max(var(--t), min(28px, var(--tw)))}
 .board.wide{--gap:4px}
 .board.wide .tile{font-size:calc(var(--t2)*.55);border-width:1.5px;border-radius:4px}
@@ -156,6 +157,31 @@ button:focus-visible{outline:2px solid var(--cobalt);outline-offset:2px}
 .calc{font-size:13px;color:var(--muted)}
 .newrec{display:inline-block;background:var(--near);color:var(--on-color);border-radius:6px;padding:2px 8px;font:700 12px var(--body);text-transform:uppercase;letter-spacing:.06em}
 .warn{font-size:13px;color:var(--near);margin:-12px 0 0;text-align:center}
+/* dica na última tentativa */
+#game.hashint{--extra:44px}
+.dica-live{display:flex;justify-content:center;max-width:100%}
+.hintbox{background:var(--cobalt-soft);color:var(--cobalt);border-radius:9px;padding:6px 12px;margin:0 0 8px;font-size:14px;font-weight:600;line-height:1.3;text-align:center;text-wrap:balance}
+.hintbox .dl{font:800 18px/1 var(--display);letter-spacing:.02em}
+.tile.dica{outline:2px dashed var(--cobalt);outline-offset:2px}
+.board.wide .tile.dica{outline-width:1.5px;outline-offset:1px}
+
+/* teclado do telemóvel (ecrãs táteis) */
+#typer{position:fixed;top:0;left:0;width:1px;height:1px;margin:0;padding:0;border:0;opacity:0;font-size:16px;color:transparent;background:transparent;caret-color:transparent;pointer-events:none;resize:none}
+#game.native .board{--avail:calc(100dvh - 270px - var(--extra, 0px))}
+#game.native .board-wrap{cursor:pointer}
+#game.kbopen .board{--avail:calc(var(--vvh, 100dvh) - 150px - var(--extra, 0px))}
+#game.kbopen .board-wrap{flex:none;justify-content:flex-start}
+.kbnat{display:flex;flex-direction:column;gap:6px;user-select:none}
+.usadas{display:grid;grid-template-columns:repeat(14, minmax(0, 30px));gap:4px;justify-content:center}
+.chip{height:28px;border-radius:5px;background:var(--key);color:var(--key-ink);font:700 13px/28px var(--display);text-align:center;text-transform:uppercase;position:relative}
+.chip.ok{background:var(--ok);color:var(--on-color)} .chip.near{background:var(--near);color:var(--on-color)}
+.chip.off{background:var(--off);color:var(--off-ink);text-shadow:0 1px 1px rgba(90,20,20,.35)}
+.kbnat-row{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.btn.digitar{padding:7px 14px;font-size:13px}
+.linkbtn{background:none;border:0;padding:4px 2px;color:var(--muted);font:500 12px var(--body);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.kbswitch{margin:-6px 0 0;text-align:center}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
+@media (max-width:420px){.hintbox{font-size:13px;padding:5px 10px}.hintbox .dl{font-size:17px}}
 @media (prefers-reduced-motion: reduce){.tile.flip,.row.shake{animation:none}}
 @media (max-width:420px){.key{height:48px;font-size:14px}.kr{gap:4px}.choices.c3 .choice span{font-size:11px}}
 .tiletitle{display:flex;flex-direction:column;align-items:center;align-self:stretch;gap:6px;margin:0;--t2:min(42px,calc((min(100vw,560px) - 32px - 7*5px)/8))}
@@ -212,6 +238,7 @@ button:focus-visible{outline:2px solid var(--cobalt);outline-offset:2px}
       <div class="exrow"><div class="ex"><div class="tile">C</div><div class="tile off">L</div><div class="tile">U</div><div class="tile">B</div><div class="tile">E</div></div><p><b style="color:var(--off)">Vermelho</b>: a letra não existe na palavra.</p></div>
       <p>A palavra secreta é sorteada de todo o dicionário do tamanho escolhido, por isso pode ser rara. No modo Extremo, cada jogo tem de 10 a 13 letras, ao acaso.</p>
       <p>Acentos e ç são preenchidos sozinhos. As letras podem repetir-se.</p>
+      <p>Na última tentativa aparece uma dica: uma letra da palavra, no lugar certo, numa casa que ainda não ficou verde. A dica não altera os pontos.</p>
       <h2>Pontuação</h2>
       <p>Cada palavra certa soma pontos à sua série. A série acaba quando falhar uma palavra, e o total conta para o recorde.</p>
       <table class="ptable"><tbody>
@@ -234,11 +261,17 @@ button:focus-visible{outline:2px solid var(--cobalt);outline-offset:2px}
     </div>
     <div class="status"><span id="info"></span><span id="left"></span></div>
     <div class="status"><span class="score"><span class="pill" id="runPts">0 pts</span><span id="runWords"></span></span><span id="recLine"></span></div>
-    <div class="board-wrap"><div class="toast" id="toast" hidden></div><div class="board" id="board"></div></div>
+    <div class="board-wrap" id="boardWrap"><div class="toast" id="toast" hidden></div><div class="dica-live" id="dica" aria-live="polite"></div><div class="board" id="board"></div></div>
     <div class="legend"><span><i style="background:var(--ok)"></i>Lugar certo</span><span><i style="background:var(--near)"></i>Existe, noutro lugar</span><span><i style="background:var(--off)"></i>Não existe</span></div>
     <p class="hint" id="hint">Toque numa casa para escrever nessa posição.</p>
     <section class="end" id="end" hidden></section>
     <div class="kb" id="kb"></div>
+    <p class="kbswitch" id="kbSwitch" hidden><button class="linkbtn" id="kbNativo" type="button">Usar o teclado do telemóvel</button></p>
+    <div class="kbnat" id="kbnat" hidden>
+      <div class="usadas" id="usadas" role="group" aria-label="Letras usadas"></div>
+      <div class="kbnat-row"><button class="btn digitar" id="digitar" type="button">Digitar</button><button class="linkbtn" id="kbTela" type="button">Mostrar teclado na tela</button></div>
+    </div>
+    <input id="typer" type="text" inputmode="text" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" enterkeyhint="send" aria-label="Digitar letras">
   </section>
 </div>
 
@@ -249,6 +282,7 @@ const LENS = [4,5,6,7,8,9], XMIN = 10, XMAX = 13;
 const LBL = {10:'Fácil',6:'Normal',4:'Difícil'}, VLBL={pt:'Portugal',br:'Brasil'};
 const store = {get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
 const $ = id => document.getElementById(id);
+const typer = $('typer');
 const fmt = n => n.toLocaleString('pt-PT');
 
 /* ---------- dicionário (dicionario/<n>.json, carregado a pedido) ---------- */
@@ -278,6 +312,10 @@ if(!prefs || typeof prefs!=='object') prefs={v:'pt',len:5,tries:6};
 if(!['pt','br'].includes(prefs.v)) prefs.v='pt';
 if(!LENS.includes(prefs.len) && prefs.len!=='x') prefs.len=5;
 if(![4,6,10].includes(prefs.tries)) prefs.tries=6;
+if(prefs.kb!==undefined && !['tela','nativo'].includes(prefs.kb)) delete prefs.kb;
+// Ecrãs táteis: usa o teclado do próprio aparelho (campo #typer), salvo se o jogador pedir o teclado desenhado.
+const COARSE = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
+const nativeKb = () => COARSE && prefs.kb!=='tela';
 let S = store.get('az-cur', null), screen = 'home';
 let RUN = store.get('az-run', {pts:0, words:0});
 function save(){ store.set('az-cur', S); store.set('az-run', RUN); }
@@ -331,7 +369,9 @@ async function withLoading(f){
   finally{ busy=false; if(screen==='home') renderHome(); }
 }
 $('back').onclick=()=>show('home');
-function show(s){ screen=s; $('home').hidden = s!=='home'; $('game').hidden = s!=='game'; if(s==='home') renderHome(); else { render(); if(S && !DICT[S.len]) loadLen(S.len).catch(()=>{}); } window.scrollTo(0,0); }
+function show(s){ screen=s; $('home').hidden = s!=='home'; $('game').hidden = s!=='game'; if(s==='home'){ typer.blur(); renderHome(); } else { render(); if(S && !DICT[S.len]) loadLen(S.len).catch(()=>{}); } window.scrollTo(0,0);
+  // abre o teclado do telemóvel ao entrar no jogo, se isto vier de um toque (o iOS só o mostra assim)
+  if(s==='game' && nativeKb() && S && !S.done && (!navigator.userActivation || navigator.userActivation.isActive)) focusTyper(true); }
 
 /* ---------- pontuação ---------- */
 let lastEnd = null; // {gain, calc, runEnd, newRecord, finalPts, finalWords}
@@ -385,7 +425,7 @@ let toastT;
 function toast(msg, ms=1800){ const t=$(screen==='game'?'toast':'toastHome'); t.textContent=msg; t.hidden=false; clearTimeout(toastT); if(ms) toastT=setTimeout(()=>t.hidden=true,ms); }
 
 function render(flipRow=-1){
-  fixCur();
+  fixCur(); renderDica();
   const b=$('board'); b.style.setProperty('--cols',S.len); b.style.setProperty('--rows',S.tries);
   b.style.setProperty('--gap', S.len>=10 ? '4px' : '6px'); b.classList.toggle('wide', S.len>=10);
   b.innerHTML='';
@@ -396,7 +436,7 @@ function render(flipRow=-1){
     for(let c=0;c<S.len;c++){
       const t=document.createElement('div'); t.className='tile';
       if(g){ t.textContent=g.word[c]; t.classList.add(g.res[c]); if(r===flipRow){ t.classList.add('flip'); t.style.animationDelay=(c*110)+'ms'; } }
-      else if(active){ const ch=S.cur[c]; if(ch){ t.textContent=ch; t.classList.add('filled'); } if(c===S.pos) t.classList.add('cur'); t.dataset.col=c; t.setAttribute('role','button'); t.setAttribute('aria-label','Posição '+(c+1)); }
+      else if(active){ const ch=S.cur[c]; if(ch){ t.textContent=ch; t.classList.add('filled'); } if(c===S.pos) t.classList.add('cur'); if(S.dica && S.dica.pos===c) t.classList.add('dica'); t.dataset.col=c; t.setAttribute('role','button'); t.setAttribute('aria-label','Posição '+(c+1)); }
       row.appendChild(t);
     }
     b.appendChild(row);
@@ -408,10 +448,29 @@ function render(flipRow=-1){
   $('recLine').innerHTML = `Recorde <b>${fmt(getRec().best)}</b>`;
   renderKb(); renderEnd();
 }
-const ROWS=['qwertyuiop','asdfghjklç','zxcvbnm'];
+// Dica da última tentativa: uma letra da palavra no lugar certo, numa casa que nenhuma tentativa pôs verde.
+// Sorteada uma vez e guardada em S.dica = {pos, ch}, para não mudar ao recarregar.
+function renderDica(){
+  if(S.dica && !(Number.isInteger(S.dica.pos) && S.dica.pos>=0 && S.dica.pos<S.len && S.dica.ch===S.key[S.dica.pos])) delete S.dica;
+  let html='';
+  if(!S.done && S.guesses.length===S.tries-1){
+    if(!S.dica){
+      const free=[]; for(let i=0;i<S.len;i++) if(!S.guesses.some(g=>g.res[i]==='ok')) free.push(i);
+      if(free.length){ const pos=free[Math.floor(Math.random()*free.length)]; S.dica={pos, ch:S.key[pos]}; save(); }
+    }
+    if(S.dica) html=`<div class="hintbox">Última tentativa. Dica: a ${S.dica.pos+1}.ª letra é <span class="dl">${S.dica.ch.toUpperCase()}</span>.</div>`;
+  }
+  const el=$('dica');
+  if(el.dataset.h!==html){ el.dataset.h=html; el.innerHTML=html; } // só mexe quando muda (leitores de ecrã)
+  $('game').classList.toggle('hashint', !!html);
+}
+const ROWS=['qwertyuiop','asdfghjklç','zxcvbnm'], ABC='abcçdefghijklmnopqrstuvwxyz';
+const STLBL={ok:'lugar certo',near:'noutro lugar',off:'não existe'};
 function renderKb(){
   const st={}; const rank={off:1,near:2,ok:3};
   S.guesses.forEach(g=>g.key.split('').forEach((ch,i)=>{ const v=g.res[i]; if(!st[ch]||rank[v]>rank[st[ch]]) st[ch]=v; }));
+  // faixa "letras usadas" (só informação), mostrada no lugar do teclado desenhado nos ecrãs táteis
+  $('usadas').innerHTML = ABC.split('').map(ch=>{ const s=ch==='ç'?'':st[ch]||''; return `<span class="chip${s?' '+s:''}">${ch}${s?`<span class="sr"> (${STLBL[s]})</span>`:''}</span>`; }).join('');
   const kb=$('kb'); kb.innerHTML='';
   ROWS.forEach((r,ri)=>{
     const row=document.createElement('div'); row.className='kr';
@@ -425,7 +484,9 @@ function renderKb(){
 function renderEnd(){
   const e=$('end');
   $('hint').hidden=S.done;
-  if(!S.done){ e.hidden=true; $('kb').hidden=false; return; }
+  const nat=nativeKb(); $('game').classList.toggle('native', nat);
+  if(!S.done){ e.hidden=true; $('kb').hidden=nat; $('kbnat').hidden=!nat; $('kbSwitch').hidden=!(COARSE && !nat); return; }
+  $('kbnat').hidden=true; $('kbSwitch').hidden=true; typer.blur();
   const L=lastEnd; let body;
   if(S.won){
     body = `<h2>Acertou!</h2>
@@ -493,15 +554,82 @@ function submit(){
   }
   save();
   render(row);
+  if(!S.done && nativeKb()) focusTyper(false); // mantém o teclado do telemóvel aberto
 }
 $('board').addEventListener('click',e=>{ const t=e.target.closest('.tile[data-col]'); if(!t||!S||S.done) return; S.pos=+t.dataset.col; render(); });
 $('kb').addEventListener('click',e=>{ const k=e.target.closest('.key'); if(k) press(k.dataset.k); });
 document.addEventListener('keydown',e=>{
   if(screen!=='game' || e.ctrlKey||e.metaKey||e.altKey) return;
+  if(e.target===typer){
+    // letras escritas no campo chegam pelos eventos beforeinput/input (o Android manda keydown "Unidentified"/229);
+    // aqui só Enter, Apagar e setas, e fica registado para não as repetir no beforeinput/input
+    if(e.isComposing || e.keyCode===229 || !['Enter','Backspace','Delete','ArrowLeft','ArrowRight'].includes(e.key)) return;
+    kdKey=e.key; kdAt=performance.now();
+  }
   if(e.target.closest && e.target.closest('button:not(.key)')) { if(e.key==='Enter'||e.key===' ') return; }
   if(['Enter','Backspace','Delete','ArrowLeft','ArrowRight'].includes(e.key)){ e.preventDefault(); press(e.key); }
   else if(e.key.length===1) press(e.key);
 });
+
+/* ---------- teclado do telemóvel ---------- */
+// O campo guarda sempre SENT (um espaço) antes do cursor, para o Apagar do teclado virtual ter o que apagar.
+// Caminho 1: beforeinput cancelável (inserir/apagar sem composição) -> trata e cancela.
+// Caminho 2: composição (teclados Android com sugestões) ou navegadores sem beforeinput -> compara o valor
+// com o anterior e traduz a diferença em teclas; fora da composição o valor volta a SENT.
+const SENT=' ';
+let kdKey='', kdAt=0, prevVal=SENT, composing=false, biDone=false;
+typer.value=SENT;
+function recent(k){ if(kdKey===k && performance.now()-kdAt<50){ kdKey=''; return true; } return false; }
+function typeChar(ch){ if(ch==='\n'||ch==='\r'){ if(!recent('Enter')) press('Enter'); } else press(ch); }
+function resetTyper(){ if(!composing && typer.value!==SENT){ typer.value=SENT; } if(!composing) prevVal=typer.value; }
+function syncTyper(){
+  const v=typer.value; let changed=false;
+  if(v!==prevVal){
+    let a=0; while(a<v.length && a<prevVal.length && v[a]===prevVal[a]) a++;
+    const del=prevVal.length-a, ins=v.slice(a); prevVal=v; changed=true;
+    for(let i=0;i<del;i++) if(!recent('Backspace')) press('Backspace');
+    for(const ch of ins) typeChar(ch);
+  }
+  resetTyper(); return changed;
+}
+function focusTyper(force){
+  if(!nativeKb() || !S || S.done || screen!=='game') return;
+  if(document.activeElement===typer){ if(!force) return; typer.blur(); } // voltar a focar volta a mostrar o teclado
+  typer.focus({preventScroll:true});
+}
+typer.addEventListener('beforeinput',e=>{
+  const t=e.inputType||'';
+  if(composing || e.isComposing || /Composition/.test(t) || !e.cancelable) return; // fica para o input
+  e.preventDefault(); biDone=true; setTimeout(()=>{ biDone=false; },0);
+  if(t.startsWith('delete')){ if(/Forward/.test(t)) press('Delete'); else if(!recent('Backspace')) press('Backspace'); }
+  else if(t==='insertLineBreak'||t==='insertParagraph'){ if(!recent('Enter')) press('Enter'); }
+  else { const d = e.data!=null ? e.data : (e.dataTransfer ? e.dataTransfer.getData('text/plain') : ''); for(const ch of d||'') typeChar(ch); }
+});
+typer.addEventListener('input',e=>{
+  if(biDone){ biDone=false; prevVal=typer.value; resetTyper(); return; } // já tratado no beforeinput
+  const t=e.inputType||'insertText';
+  if(!syncTyper() && !composing && e.data && /^insert/.test(t) && !/Composition/.test(t)) for(const ch of e.data) typeChar(ch);
+});
+typer.addEventListener('compositionstart',()=>{ composing=true; });
+typer.addEventListener('compositionend',()=>{ composing=false; syncTyper(); });
+// Com o teclado aberto, o tabuleiro encolhe para caber na parte visível (visualViewport) e fica logo abaixo do cabeçalho.
+function fitTyper(){
+  const vv=window.visualViewport, g=$('game');
+  const open = !!vv && document.activeElement===typer && vv.height < document.documentElement.clientHeight - 100;
+  if(open) document.documentElement.style.setProperty('--vvh', Math.round(vv.height)+'px');
+  if(g.classList.contains('kbopen')!==open) g.classList.toggle('kbopen', open);
+  if(open) requestAnimationFrame(()=>{
+    const r=$('board').getBoundingClientRect(), top=vv.offsetTop, bot=top+vv.height;
+    if(r.bottom>bot) window.scrollBy(0, Math.min(r.top-top-8, r.bottom-bot+8)); else if(r.top<top) window.scrollBy(0, r.top-top-8);
+  });
+}
+typer.addEventListener('focus',()=>{ composing=false; typer.value=SENT; prevVal=SENT; try{ typer.setSelectionRange(SENT.length,SENT.length); }catch(e){} fitTyper(); setTimeout(fitTyper,350); });
+typer.addEventListener('blur',()=>{ composing=false; fitTyper(); });
+if(window.visualViewport) visualViewport.addEventListener('resize', fitTyper);
+$('boardWrap').addEventListener('click',()=>focusTyper(true));
+$('digitar').addEventListener('click',()=>focusTyper(true));
+$('kbTela').addEventListener('click',()=>{ prefs.kb='tela'; store.set('az-prefs2',prefs); typer.blur(); render(); });
+$('kbNativo').addEventListener('click',()=>{ prefs.kb='nativo'; store.set('az-prefs2',prefs); render(); focusTyper(true); });
 
 window.claude?.hot?.snapshot?.(()=>({S,screen,RUN,lastEnd}));
 function start(data){
