@@ -64,12 +64,14 @@ var AZ = (function () {
     var f = D.forms.get(key);
     return f ? f.join(' / ') : key;
   }
-  function candidates(D, guesses) {
+  function candidates(D, guesses, dica) {
     var n = D.n, out = [], i, j, ok;
     var gs = (guesses || []).map(function (g) { return { c: enc(g.key), t: resCode(g.res), bad: g.key.length !== n }; });
+    // dica da última tentativa do jogo: {pos, ch} = a letra ch está na posição pos
+    var dp = dica && typeof dica.pos === 'number' && typeof dica.ch === 'string' ? dica.pos : -1, dc = dp >= 0 ? norm(dica.ch.toLowerCase()) : '';
     for (i = 0; i < D.keys.length; i++) {
-      ok = true;
-      for (j = 0; j < gs.length; j++) if (gs[j].bad || pcode(gs[j].c, D.codes[i], n) !== gs[j].t) { ok = false; break; }
+      ok = dp < 0 || D.keys[i].charAt(dp) === dc;
+      for (j = 0; ok && j < gs.length; j++) if (gs[j].bad || pcode(gs[j].c, D.codes[i], n) !== gs[j].t) { ok = false; break; }
       if (ok) out.push(i);
     }
     return out;
@@ -114,8 +116,8 @@ var AZ = (function () {
     });
     return order.map(function (i) { return out[i]; });
   }
-  function suggest(D, guesses, v, top) {
-    var n = D.n, idx = candidates(D, guesses), N = idx.length, st = letterStats(D, idx), i, ranked = [], mode;
+  function suggest(D, guesses, v, top, dica) {
+    var n = D.n, idx = candidates(D, guesses, dica), N = idx.length, st = letterStats(D, idx), i, ranked = [], mode;
     var cs = idx.map(function (i2) { return { key: D.keys[i2], h: heur(st, D.codes[i2], n, false) }; });
     cs.sort(function (a, b) { return b.h - a.h || byKey(a, b); });
     var cands = cs.map(function (c) { return { key: c.key, display: displayOf(D, c.key, v), heur: c.h / N }; });
@@ -145,9 +147,9 @@ var AZ = (function () {
 export const { norm, score, enc, pcode, resCode, parseDict, displayOf, ENTROPY_MAX, PROBE_MAX_CANDS, PROBES } = AZ;
 
 // Índices (no dicionário) das chaves compatíveis com as tentativas [{key, res}].
-export const candidateIndexes = (D, guesses) => AZ.candidates(D, guesses);
+export const candidateIndexes = (D, guesses, dica = null) => AZ.candidates(D, guesses, dica);
 // Chaves (sem acento) compatíveis com as tentativas, na ordem do dicionário.
-export const candidates = (D, guesses) => AZ.candidates(D, guesses).map(i => D.keys[i]);
+export const candidates = (D, guesses, dica = null) => AZ.candidates(D, guesses, dica).map(i => D.keys[i]);
 
 // Sugestões para o estado [{key, res}] na variante v ('pt' | 'br'):
 //   { mode: 'entropia'|'heuristica'|'nenhuma', total, cands, ranked, best }
@@ -155,9 +157,17 @@ export const candidates = (D, guesses) => AZ.candidates(D, guesses).map(i => D.k
 //   [{key, display, heur}]; ranked: todos os palpites avaliados, do melhor para
 //   o pior; best: os `top` primeiros. Cada palpite tem sempre
 //   {key, display, bits|null, heur|null, cand, expectedRemaining|null}.
-export const suggest = (D, guesses, v = 'pt', top = 5) => AZ.suggest(D, guesses, v, top);
+// dica: {pos, ch} da última tentativa do jogo (S.dica), ou null.
+export const suggest = (D, guesses, v = 'pt', top = 5, dica = null) => AZ.suggest(D, guesses, v, top, dica);
 
 export const isValid = (D, key) => D.valid.has(key);
+
+// Na última tentativa só vale palpitar uma candidata: sondas que não podem
+// ser a resposta saem da lista.
+export function lastTryOnly(sug) {
+  const ranked = sug.ranked.filter(r => r.cand);
+  return { ...sug, ranked, best: ranked.slice(0, sug.best.length || 5) };
+}
 
 // ---------- dicionário ----------
 // loadDict(n, opts) -> {n, keys (sem repetição), forms: Map<key, string[]>,
@@ -250,6 +260,7 @@ export function describeState(S, nCands, totalKeys, mode) {
       cores: g.key.split('').map((ch, j) => `${ch.toUpperCase()}: ${COLOR[g.res[j]]}`),
     })),
     palavras_possiveis_restantes: `${nCands} de ${totalKeys}`,
+    dica: S.dica && typeof S.dica.pos === 'number' && S.dica.ch ? `a ${S.dica.pos + 1}.ª letra é ${String(S.dica.ch).toUpperCase()}` : 'nenhuma',
     como_as_opcoes_foram_calculadas: mode === 'heuristica'
       ? 'Muitas palavras possíveis: as opções são candidatas ordenadas por uma pontuação heurística de letras comuns (sem bits).'
       : 'As opções estão ordenadas pela informação esperada (bits); algumas podem ser sondas que não são a resposta.',

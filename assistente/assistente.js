@@ -68,12 +68,14 @@
       var f = D.forms.get(key);
       return f ? f.join(' / ') : key;
     }
-    function candidates(D, guesses) {
+    function candidates(D, guesses, dica) {
       var n = D.n, out = [], i, j, ok;
       var gs = (guesses || []).map(function (g) { return { c: enc(g.key), t: resCode(g.res), bad: g.key.length !== n }; });
+      // dica da última tentativa do jogo: {pos, ch} = a letra ch está na posição pos
+      var dp = dica && typeof dica.pos === 'number' && typeof dica.ch === 'string' ? dica.pos : -1, dc = dp >= 0 ? norm(dica.ch.toLowerCase()) : '';
       for (i = 0; i < D.keys.length; i++) {
-        ok = true;
-        for (j = 0; j < gs.length; j++) if (gs[j].bad || pcode(gs[j].c, D.codes[i], n) !== gs[j].t) { ok = false; break; }
+        ok = dp < 0 || D.keys[i].charAt(dp) === dc;
+        for (j = 0; ok && j < gs.length; j++) if (gs[j].bad || pcode(gs[j].c, D.codes[i], n) !== gs[j].t) { ok = false; break; }
         if (ok) out.push(i);
       }
       return out;
@@ -118,8 +120,8 @@
       });
       return order.map(function (i) { return out[i]; });
     }
-    function suggest(D, guesses, v, top) {
-      var n = D.n, idx = candidates(D, guesses), N = idx.length, st = letterStats(D, idx), i, ranked = [], mode;
+    function suggest(D, guesses, v, top, dica) {
+      var n = D.n, idx = candidates(D, guesses, dica), N = idx.length, st = letterStats(D, idx), i, ranked = [], mode;
       var cs = idx.map(function (i2) { return { key: D.keys[i2], h: heur(st, D.codes[i2], n, false) }; });
       cs.sort(function (a, b) { return b.h - a.h || byKey(a, b); });
       var cands = cs.map(function (c) { return { key: c.key, display: displayOf(D, c.key, v), heur: c.h / N }; });
@@ -198,7 +200,7 @@
   function update(force){
     var S=get('az-cur'), b=root.querySelector('#az-asst-b'), t=root.querySelector('#az-asst-t');
     if(S&&S.modo==='invisivel'){ if(last!=='invisivel'){ last='invisivel'; t.textContent='Assistente · Invisível'; b.innerHTML='<p>Modo Invisível: o assistente ainda não suporta este modo.</p>'; } return; }
-    var sig=S?JSON.stringify([S.v,S.len,S.guesses,S.done,!!ready[S.len]]):'none';
+    var sig=S?JSON.stringify([S.v,S.len,S.guesses,S.done,!!ready[S.len],S.dica||null]):'none';
     if(!force&&sig===last) return; last=sig;
     if(!S||!S.secret||!S.len){ t.textContent='Assistente'; b.innerHTML='<p>Comece um jogo e o painel atualiza sozinho.</p>'; return; }
     t.textContent=S.len+' letras · '+(S.v==='br'?'Brasil':'Portugal')+(S.modo==='extremo'?' · Extremo':'');
@@ -210,8 +212,9 @@
       return;
     }
     var g=S.guesses||[], mk=sig;
-    if(!memo[mk]){ b.innerHTML='<p>Calculando…</p>'; setTimeout(function(){ memo={}; memo[mk]=AZ.suggest(D,g,S.v,5); last=''; update(true); },20); return; }
+    if(!memo[mk]){ b.innerHTML='<p>Calculando…</p>'; setTimeout(function(){ memo={}; var R0=AZ.suggest(D,g,S.v,5,S.dica||null); if(g.length===S.tries-1){ R0.ranked=R0.ranked.filter(function(x){return x.cand;}); R0.best=R0.ranked.slice(0,5); } memo[mk]=R0; last=''; update(true); },20); return; }
     var R=memo[mk], N=R.total, html='';
+    if(S.dica&&typeof S.dica.pos==='number'&&S.dica.ch) html+='<p>Dica do jogo: a '+(S.dica.pos+1)+'.ª letra é '+String(S.dica.ch).toUpperCase()+'.</p>';
     if(!N){ b.innerHTML='<p>Nenhuma palavra do dicionário encontra estas cores.</p>'; return; }
     var pct=100/N;
     html+='<h3>Melhor próxima tentativa'+(R.mode==='heuristica'?' (letras mais comuns)':'')+'</h3><ul>'+R.best.map(function(s){

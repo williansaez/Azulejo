@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadDict, suggest, describeOptions, describeState } from './solver.mjs';
+import { loadDict, suggest, describeOptions, describeState, lastTryOnly } from './solver.mjs';
 import { loadBackend, pick } from './backends/index.mjs';
 import * as Livre from './livre.mjs';
 
@@ -205,9 +205,10 @@ async function playGame(browser, url, backend, n) {
       let sug;
       if (S.guesses.length === 0 && openers.has(openerId)) sug = openers.get(openerId);
       else {
-        sug = suggest(D, S.guesses, cfg.v);
+        sug = suggest(D, S.guesses, cfg.v, 5, S.dica || null);
         if (S.guesses.length === 0) openers.set(openerId, sug);
       }
+      if (S.guesses.length === S.tries - 1) sug = lastTryOnly(sug); // última tentativa: só candidatas
       const cands = sug.cands;
       if (!cands.length) throw new Error('nenhuma palavra do dicionário combina com as cores (dicionário diferente do jogo?)');
       const options = describeOptions(sug, cfg.k);

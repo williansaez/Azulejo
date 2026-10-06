@@ -241,7 +241,7 @@ addEventListener('error', e => {
 }, true);
 </script>
 <script type="module">
-import { loadDict, suggest, describeOptions, describeState } from './solver.mjs';
+import { loadDict, suggest, describeOptions, describeState, lastTryOnly } from './solver.mjs';
 import { loadBackend, pick } from './backends/index.mjs';
 import * as Livre from './livre.mjs';
 
@@ -612,7 +612,8 @@ class Side {
       if (stopping) throw new Error('interrompido');
       const round = S.guesses.length + 1;
       this.facts({ fMove: `${round} de ${cfg.tries}`, fLat: '…' });
-      const sug = S.guesses.length === 0 && openers.has(cfg.v + len) ? openers.get(cfg.v + len) : suggest(D, S.guesses, cfg.v);
+      let sug = S.guesses.length === 0 && openers.has(cfg.v + len) ? openers.get(cfg.v + len) : suggest(D, S.guesses, cfg.v, 5, S.dica || null);
+      if (S.guesses.length === cfg.tries - 1) sug = lastTryOnly(sug); // última tentativa: só candidatas
       const cands = sug.cands;
       if (!cands.length) throw new Error('nenhuma palavra do dicionário combina com as cores');
       const options = describeOptions(sug, cfg.k);
