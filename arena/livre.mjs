@@ -31,20 +31,21 @@ export function regras(tries, v) {
   return `Adivinhe a palavra secreta (${VARIANT[v] || v}) em até ${tries} tentativas. ` +
     'A palavra secreta tem de 4 a 9 letras, mas o tamanho não é mostrado; só na última tentativa o jogo revela quantas letras ela tem. ' +
     'Cada tentativa pode ser qualquer palavra do dicionário com 4 a 13 letras. ' +
-    'Depois de cada tentativa, cada letra recebe "existe" (aparece em algum lugar da palavra secreta) ou "não existe"; a posição nunca é revelada. ' +
+    'Depois de cada tentativa, cada letra recebe "certa" (está nessa mesma posição na palavra secreta), "existe" (aparece noutra posição) ou "não existe". ' +
     'Acentos e cedilha não contam. Ganha quem escrever exatamente a palavra secreta.';
 }
 
 // ctx do modo livre, a partir de az-cur SEM len/secret/key.
 export function buildCtx(S, invalidas = []) {
   assertHidden(S);
-  const existe = new Set(), nao = new Set();
+  const existe = new Set(), nao = new Set(), certas = new Map();
   const historico = S.guesses.map((g, i) => ({
     numero: i + 1,
     palavra: (g.word || g.key).toUpperCase(),
     letras: g.key.split('').map((ch, j) => {
-      const e = g.res[j] === 'off' ? 'não existe' : 'existe'; // 'ok' só aparece ao acertar
-      (e === 'existe' ? existe : nao).add(ch.toUpperCase());
+      const e = g.res[j] === 'off' ? 'não existe' : g.res[j] === 'ok' ? 'certa' : 'existe';
+      (e === 'não existe' ? nao : existe).add(ch.toUpperCase());
+      if (e === 'certa') certas.set(j + 1, ch.toUpperCase());
       return { letra: ch.toUpperCase(), estado: e };
     }),
   }));
@@ -56,6 +57,7 @@ export function buildCtx(S, invalidas = []) {
     historico,
     letras_que_existem: sorted(existe),
     letras_que_nao_existem: sorted(nao),
+    letras_certas_por_posicao: [...certas].sort((a, b) => a[0] - b[0]).map(([posicao, letra]) => ({ posicao, letra })),
     palavras_ja_tentadas: S.guesses.map(g => g.key.toUpperCase()),
     dica_tamanho: Number.isInteger(S.dica?.len) ? S.dica.len : null,
     tentativas_invalidas_nesta_rodada: invalidas.map(x => ({ ...x })),

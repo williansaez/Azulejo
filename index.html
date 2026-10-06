@@ -245,7 +245,7 @@ button:focus-visible{outline:2px solid var(--cobalt);outline-offset:2px}
       <p>A palavra secreta é sorteada de todo o dicionário do tamanho escolhido, por isso pode ser rara. No modo Extremo, cada jogo tem de 10 a 13 letras, ao acaso.</p>
       <p>Acentos e ç são preenchidos sozinhos. As letras podem repetir-se.</p>
       <p>Na última tentativa aparece uma dica: uma letra da palavra, no lugar certo, numa casa que ainda não ficou verde. A dica não altera os pontos.</p>
-      <p>No modo Invisível não se sabe quantas letras tem a palavra (de 4 a 9). Escreva palavras de 4 a 13 letras: cada letra fica <b style="color:var(--near)">amarela</b> se existe na palavra secreta e <b style="color:var(--off)">vermelha</b> se não existe, sem dizer o lugar. Na última tentativa, a dica é o número de letras.</p>
+      <p>No modo Invisível não se sabe quantas letras tem a palavra (de 4 a 9). Escreva palavras de 4 a 13 letras: cada letra fica <b style="color:var(--ok)">verde</b> se está na mesma posição da palavra secreta, <b style="color:var(--near)">amarela</b> se existe noutro lugar e <b style="color:var(--off)">vermelha</b> se não existe. Na última tentativa, a dica é o número de letras.</p>
       <h2>Pontuação</h2>
       <p>Cada palavra certa soma pontos à sua série. A série acaba quando falhar uma palavra, e o total conta para o recorde.</p>
       <table class="ptable"><tbody>
@@ -452,7 +452,7 @@ function render(flipRow=-1){
   $('hint').textContent = inv ? 'O tamanho é segredo: escreva palavras de 4 a 13 letras.' : 'Toque numa casa para escrever nessa posição.';
   const lg = inv ? 'inv' : 'std';
   if($('legend').dataset.m!==lg){ $('legend').dataset.m=lg; $('legend').innerHTML = inv
-    ? '<span><i style="background:var(--near)"></i>Existe na palavra</span><span><i style="background:var(--off)"></i>Não existe</span>'
+    ? '<span><i style="background:var(--ok)"></i>Lugar certo</span><span><i style="background:var(--near)"></i>Existe, noutro lugar</span><span><i style="background:var(--off)"></i>Não existe</span>'
     : '<span><i style="background:var(--ok)"></i>Lugar certo</span><span><i style="background:var(--near)"></i>Existe, noutro lugar</span><span><i style="background:var(--off)"></i>Não existe</span>'; }
   $('left').innerHTML = S.done ? '' : `Faltam <b>${S.tries - S.guesses.length}</b> de ${S.tries}`;
   $('runPts').textContent = fmt(RUN.pts)+' pts';
@@ -528,8 +528,7 @@ const ROWS=['qwertyuiop','asdfghjklç','zxcvbnm'], ABC='abcçdefghijklmnopqrstuv
 const STLBL={ok:'lugar certo',near:'noutro lugar',off:'não existe'};
 function renderKb(){
   const st={}; const rank={off:1,near:2,ok:3};
-  const inv=isInv(); // Invisível: só "existe" (near) ou "não existe" (off), mesmo depois de acertar
-  S.guesses.forEach(g=>g.key.split('').forEach((ch,i)=>{ let v=g.res[i]; if(inv && v==='ok') v='near'; if(!st[ch]||rank[v]>rank[st[ch]]) st[ch]=v; }));
+  S.guesses.forEach(g=>g.key.split('').forEach((ch,i)=>{ const v=g.res[i]; if(!st[ch]||rank[v]>rank[st[ch]]) st[ch]=v; }));
   // faixa "letras usadas" (só informação), mostrada no lugar do teclado desenhado nos ecrãs táteis
   $('usadas').innerHTML = ABC.split('').map(ch=>{ const s=ch==='ç'?'':st[ch]||''; return `<span class="chip${s?' '+s:''}">${ch}${s?`<span class="sr"> (${STLBL[s]})</span>`:''}</span>`; }).join('');
   const kb=$('kb'); kb.innerHTML='';
@@ -622,8 +621,8 @@ function submitInv(){
     return;
   }
   if(!won && !D.valid.has(g)){ toast('Essa palavra não está no dicionário'); return shake(); }
-  // cada letra: existe na palavra (near) ou não (off); nunca o lugar. Ao acertar, a linha fica toda verde.
-  const res = won ? Array(n).fill('ok') : S.cur.map(ch=>S.key.includes(ch) ? 'near' : 'off');
+  // cada letra: lugar certo (ok) se coincide com a mesma posição da secreta, existe noutro lugar (near) ou não existe (off)
+  const res = won ? Array(n).fill('ok') : S.cur.map((ch,i)=> (i<S.key.length && S.key[i]===ch) ? 'ok' : S.key.includes(ch) ? 'near' : 'off');
   const word = won ? S.secret : disp(g);
   S.guesses.push({key:g, word, res}); S.cur=[]; S.pos=0;
   finish(S.guesses.length-1, won);

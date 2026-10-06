@@ -112,7 +112,7 @@ tr.pick td.w{color:var(--cobalt)}
 .freeview{display:flex;flex-direction:column;gap:8px}
 .chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-height:22px}
 .chips .chip{display:inline-block;min-width:22px;text-align:center;border-radius:5px;padding:1px 6px;font:700 12px var(--display);background:var(--key);color:var(--key-ink)}
-.chips .chip.near{background:var(--near);color:var(--on-color)} .chips .chip.off{background:var(--off);color:var(--off-ink)}
+.chips .chip.near{background:var(--near);color:var(--on-color)} .chips .chip.off{background:var(--off);color:var(--off-ink)} .chips .chip.ok{background:var(--ok);color:var(--on-color)}
 .chips .sep{width:10px}
 .fvhist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;font-size:12.5px;font-variant-numeric:tabular-nums}
 .fvhist b{font-family:var(--display);letter-spacing:.04em}
@@ -479,10 +479,11 @@ class Side {
   }
   // A visão do modelo: letras (existe / não existe), tentativas e dica.
   renderModelView(ctx) {
-    const chip = (l, cls) => `<span class="chip ${cls}" title="${cls === 'near' ? 'existe' : 'não existe'}">${esc(l)}</span>`;
+    const chip = (l, cls) => `<span class="chip ${cls}" title="${cls === 'ok' ? 'posição certa' : cls === 'near' ? 'existe' : 'não existe'}">${esc(l)}</span>`;
+    const ok = (ctx.letras_certas_por_posicao || []).map(c => chip(`${c.letra}${c.posicao}`, 'ok')).join('');
     const ex = ctx.letras_que_existem.map(l => chip(l, 'near')).join(''), no = ctx.letras_que_nao_existem.map(l => chip(l, 'off')).join('');
     this.q('fvLetters').innerHTML = (ex || no)
-      ? `${ex ? `<span class="help">existe</span>${ex}` : ''}${ex && no ? '<span class="sep"></span>' : ''}${no ? `<span class="help">não existe</span>${no}` : ''}` +
+      ? `${ok ? `<span class="help">certa (letra e posição)</span>${ok}<span class="sep"></span>` : ''}${ex ? `<span class="help">existe</span>${ex}` : ''}${ex && no ? '<span class="sep"></span>' : ''}${no ? `<span class="help">não existe</span>${no}` : ''}` +
         (ctx.dica_tamanho ? `<span class="sep"></span><span class="tag">dica: ${ctx.dica_tamanho} letras</span>` : '')
       : (ctx.dica_tamanho ? `<span class="tag">dica: ${ctx.dica_tamanho} letras</span>` : '<span class="empty">Nenhuma letra conhecida ainda.</span>');
     const hist = this.q('fvHist');
@@ -490,7 +491,7 @@ class Side {
     if (!ctx.historico.length) hist.innerHTML = '<li class="empty">Ainda não houve tentativas.</li>';
     for (const h of ctx.historico) {
       const li = document.createElement('li');
-      li.append(`${h.numero}. `, minis(h.letras.map(l => (l.estado === 'existe' ? 'near' : 'off'))));
+      li.append(`${h.numero}. `, minis(h.letras.map(l => (l.estado === 'certa' ? 'ok' : l.estado === 'existe' ? 'near' : 'off'))));
       const b = document.createElement('b'); b.textContent = h.palavra; li.append(b);
       hist.appendChild(li);
     }

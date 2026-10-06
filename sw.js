@@ -1,6 +1,6 @@
 // Azulejo das Palavras - service worker (funcionamento offline)
 // Ao publicar uma nova versão, aumente o número abaixo.
-const VERSION = 'azulejo-v8';
+const VERSION = 'azulejo-v9';
 const DICT = ['./dicionario/index.json'];
 for (let n = 4; n <= 13; n++) DICT.push('./dicionario/' + n + '.json');
 const FILES = ['./', './index.html', './manifest.webmanifest',

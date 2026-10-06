@@ -33,7 +33,7 @@ const SYSTEM_LIVRE = `Você está jogando "Azulejo das Palavras" no modo Invisí
 Regras:
 - A palavra secreta tem de 4 a 9 letras, mas o tamanho NÃO é mostrado (só na última tentativa o jogo revela quantas letras ela tem).
 - Cada tentativa pode ser qualquer palavra portuguesa do dicionário com 4 a 13 letras (não precisa ter o tamanho da secreta).
-- Depois de cada tentativa, cada letra da tentativa é marcada como "existe" (a letra aparece em algum lugar da palavra secreta) ou "não existe" (não aparece). A posição nunca é revelada.
+- Depois de cada tentativa, cada letra é marcada como "certa" (está nessa mesma posição na palavra secreta), "existe" (aparece noutra posição) ou "não existe". Uma letra certa na posição N também diz que a palavra tem pelo menos N letras.
 - Acentos e cedilha não contam (Á = A, Ç = C).
 - Você ganha quando escrever exatamente a palavra secreta. Há um número limitado de tentativas.
 Como jogar bem:
@@ -54,6 +54,7 @@ function userMessageLivre(ctx) {
   lines.push('');
   lines.push(`Letras que existem na palavra secreta: ${lista(ctx.letras_que_existem)}.`);
   lines.push(`Letras que não existem na palavra secreta: ${lista(ctx.letras_que_nao_existem)}.`);
+  if (ctx.letras_certas_por_posicao?.length) lines.push(`Letras já na posição certa: ${ctx.letras_certas_por_posicao.map(c => `${c.letra} na ${c.posicao}.ª`).join(', ')}.`);
   lines.push(`Palavras já tentadas (não repita): ${lista(ctx.palavras_ja_tentadas)}.`);
   lines.push(ctx.dica_tamanho ? `Dica da última tentativa: a palavra secreta tem ${ctx.dica_tamanho} letras.`
     : 'O tamanho da palavra secreta não foi revelado (tem de 4 a 9 letras).');
