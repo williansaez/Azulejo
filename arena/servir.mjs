@@ -3,6 +3,8 @@
 // Serve a raiz do repositório (o jogo em / e a arena em /arena/) e faz de proxy
 // para os modelos, para evitar CORS e não pôr chaves na página:
 //   /ollama/*   -> ${OLLAMA_URL   || http://localhost:11434}/*
+//   /ollama2/*  -> ${OLLAMA_URL2  || OLLAMA_URL || http://localhost:11434}/*  (um segundo
+//                  Ollama, ex.: um lado do duelo noutra máquina ou porta)
 //   /typesafe/* -> ${TYPESAFE_URL || https://api.typesafe.ai}/*  (+ Authorization
 //                  Bearer ${TYPESAFE_API_KEY}, se definida e o pedido não trouxer)
 //
@@ -23,6 +25,7 @@ const HOST = a.host || process.env.HOST || '127.0.0.1';
 
 const PROXIES = {
   '/ollama': { target: process.env.OLLAMA_URL || 'http://localhost:11434' },
+  '/ollama2': { target: process.env.OLLAMA_URL2 || process.env.OLLAMA_URL || 'http://localhost:11434' },
   '/typesafe': { target: process.env.TYPESAFE_URL || 'https://api.typesafe.ai', key: process.env.TYPESAFE_API_KEY || '' },
 };
 
@@ -91,6 +94,7 @@ server.listen(PORT, HOST, () => {
   const shown = HOST === '127.0.0.1' || HOST === '0.0.0.0' ? 'localhost' : HOST;
   console.log(`Arena do Azulejo: abra http://${shown}:${PORT}/arena/`);
   console.log(`  /ollama   -> ${PROXIES['/ollama'].target}`);
+  console.log(`  /ollama2  -> ${PROXIES['/ollama2'].target}`);
   console.log(`  /typesafe -> ${PROXIES['/typesafe'].target}${PROXIES['/typesafe'].key ? ' (com TYPESAFE_API_KEY)' : ''}`);
   console.log('  Ctrl-C para parar.');
 });

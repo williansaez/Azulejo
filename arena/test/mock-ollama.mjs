@@ -3,10 +3,15 @@
 //   Primeiro o código (format com enum): responde sempre a primeira opção do
 //     enum; MOCK_MODO=invalido devolve um id que não está nas opções.
 //   Modo livre (format sem enum, com "palavra"): responde palavras comuns de uma
-//     lista fixa, em ciclo, pulando as que o pedido diz já tentadas/recusadas;
-//     MOCK_MODO=invalido devolve sempre "qzxwv" (não é palavra), para testar as
-//     novas tentativas e o sorteio; MOCK_MODO=misto erra a 1.ª proposta de cada
-//     rodada e acerta a 2.ª. O mock não sabe o segredo: só acerta por acaso.
+//     lista fixa, em ciclo, pulando as que o pedido diz já tentadas/recusadas.
+//     Lê as recusadas da rodada nas linhas "- PALAVRA: motivo" da mensagem e
+//     nunca repete uma delas.
+//     MOCK_MODO=invalido devolve sempre uma não-palavra nova (qzxwa, qzxwb, …),
+//       para testar o abandono no limite de propostas;
+//     MOCK_MODO=teimoso erra as 3 primeiras propostas de cada rodada (uma
+//       não-palavra, uma com hífen e uma curta demais) e acerta a 4.ª;
+//     MOCK_MODO=misto erra a 1.ª proposta de cada rodada e acerta a 2.ª.
+//     O mock não sabe o segredo: só acerta por acaso.
 //   Com think: true devolve também message.thinking.
 //   node arena/test/mock-ollama.mjs [porta]
 import http from 'node:http';
@@ -42,14 +47,27 @@ const PALAVRAS = COMUNS.filter(w => {
 });
 
 let calls = 0, cursor = 0;
-// "Palavras já tentadas (não repita): A, B." e "Propostas recusadas nesta rodada (não repita): X (motivo), ..."
-function usadas(text) {
+// "Palavras já tentadas (não repita): A, B." (uma linha) e as recusadas da
+// rodada, uma por linha: "- PALAVRA: motivo".
+function tentadas(text) {
   const out = new Set();
-  for (const re of [/Palavras já tentadas[^:]*:\s*(.*)$/m, /Propostas recusadas nesta rodada[^:]*:\s*(.*)$/m]) {
-    const m = text.match(re);
-    if (m) for (const p of m[1].replace(/\([^)]*\)/g, '').replace(/\.$/, '').split(',')) if (p.trim() && p.trim() !== 'nenhuma') out.add(norm(p.trim().toLowerCase()));
-  }
+  const m = text.match(/Palavras já tentadas[^:]*:\s*(.*)$/m);
+  if (m) for (const p of m[1].replace(/\.$/, '').split(',')) if (p.trim() && p.trim() !== 'nenhuma') out.add(norm(p.trim().toLowerCase()));
   return out;
+}
+const recusadas = text => [...text.matchAll(/^- (.+?): /gm)].map(m => m[1].trim().toLowerCase());
+const usadas = text => new Set([...tentadas(text), ...recusadas(text).map(norm)]);
+// Não-palavras para os modos de erro, sempre novas (nunca uma já recusada).
+const TEIMOSO = ['qzxwv', 'bem-vindo', 'sol'];
+function invalida(text, i) {
+  const ja = new Set(recusadas(text));
+  if (i != null && i < TEIMOSO.length && !ja.has(TEIMOSO[i])) return TEIMOSO[i];
+  for (let k = 0; ; k++) {
+    let suf = '', x = k;
+    do { suf = String.fromCharCode(97 + (x % 26)) + suf; x = Math.floor(x / 26) - 1; } while (x >= 0);
+    const w = 'qzxw' + suf;
+    if (!ja.has(w)) return w;
+  }
 }
 function proxima(text) {
   const skip = usadas(text);
@@ -78,8 +96,9 @@ http.createServer((req, res) => {
     let content;
     if (livre) {
       const user = q.messages[1].content;
-      const ruim = process.env.MOCK_MODO === 'invalido' || (process.env.MOCK_MODO === 'misto' && !/Propostas recusadas nesta rodada/.test(user));
-      const palavra = ruim ? 'qzxwv' : proxima(user);
+      const modo = process.env.MOCK_MODO, nRec = recusadas(user).length;
+      const ruim = modo === 'invalido' || (modo === 'misto' && nRec === 0) || (modo === 'teimoso' && nRec < 3);
+      const palavra = ruim ? invalida(user, modo === 'teimoso' ? nRec : null) : proxima(user);
       content = JSON.stringify({ palavra, motivo: ruim ? 'mock: palavra inválida' : 'mock: palavra comum da lista' });
     } else {
       const escolha = process.env.MOCK_MODO === 'invalido' ? 'xxxxx' : ids[0];

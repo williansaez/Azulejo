@@ -15,7 +15,8 @@
 // ../livre.mjs). livre === false quer dizer que o backend não gera palavras
 // (code e jev só escolhem entre opções) e chooseFree lança erro.
 // pickFree() só mede e normaliza a resposta; quem valida a palavra (tamanho,
-// dicionário, repetida), pede de novo e sorteia no fim é o harness (livre.mjs).
+// dicionário, repetida) e pede de novo até vir uma válida (ou abandona a
+// partida no limite de propostas) é o harness (livre.mjs). Não há sorteio.
 
 export async function loadBackend(name, opts) {
   if (!['code', 'ollama', 'jev'].includes(name)) throw new Error(`Backend desconhecido: ${name} (use code, ollama ou jev)`);

@@ -5,9 +5,12 @@
 //   node arena/jogar.mjs --backend code|ollama|jev [--jogos 3] [--letras 4..9|extremo|invisivel]
 //     [--variante pt|br] [--tentativas 6] [--url URL] [--local]
 //     [--model qwen3.5:9b] [--opcoes 8] [--pensar] [--visivel] [--ritmo MS] [--saida arena/resultados]
+//     [--max-propostas 25]
 //
 // --letras invisivel é o modo livre: o modelo inventa cada palavra (livre.mjs),
-// sem opções do código; só o backend ollama joga.
+// sem opções do código e sem sorteio; só o backend ollama joga. Se o modelo
+// não der uma palavra válida em --max-propostas propostas numa rodada, a
+// partida é abandonada (conta como derrota).
 
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
@@ -38,6 +41,7 @@ const { values: a } = parseArgs({
     visivel: { type: 'boolean', default: false },
     ritmo: { type: 'string' },
     saida: { type: 'string' },
+    'max-propostas': { type: 'string' },
     ajuda: { type: 'boolean', short: 'h', default: false },
   },
 });
@@ -60,7 +64,9 @@ const cfg = {
   v: a.variante,
   tries: Number(a.tentativas),
   k: Math.max(2, parseInt(a.opcoes, 10) || 8),
+  maxPropostas: a['max-propostas'] != null ? parseInt(a['max-propostas'], 10) : Livre.MAX_PROPOSTAS,
 };
+if (!(cfg.maxPropostas >= 1)) fail('--max-propostas deve ser um inteiro a partir de 1');
 if (!extremo && !livre && ![4, 5, 6, 7, 8, 9].includes(cfg.len)) fail('--letras deve ser 4 a 9, extremo ou invisivel');
 const lenLabel = extremo ? 'Extremo (10 a 13 letras)' : livre ? 'invisível (livre): 4 a 9 letras, tamanho escondido' : `${cfg.len} letras`;
 if (!['pt', 'br'].includes(cfg.v)) fail('--variante deve ser pt ou br');
@@ -114,6 +120,12 @@ const readStateFree = page => page.evaluate(() => {
   if (!s) return null;
   const { secret, key, len, ...rest } = s;
   return rest;
+});
+// Segredo e tamanho de uma partida abandonada: o agente já parou de jogar
+// (nenhuma palavra será digitada depois disto), então ler não vaza nada.
+const readAbandoned = page => page.evaluate(() => {
+  const s = JSON.parse(localStorage.getItem('az-cur') || 'null');
+  return { secret: s?.secret ?? null, len: s?.len ?? null, key: s?.key ?? null };
 });
 // Estado completo, só depois de done (para o registro).
 const readFinal = page => page.evaluate(() => {
@@ -259,7 +271,7 @@ async function playGame(browser, url, backend, n) {
 
 // ---------- modo livre (Invisível) ----------
 // O modelo inventa cada palavra a partir do estado visível (livre.mjs). O
-// harness nunca lê len, secret nem key antes de done: readStateFree remove
+// harness nunca lê len, secret nem key antes de done (ou do abandono): readStateFree remove
 // esses campos dentro da página e Livre.assertHidden confere a cada rodada.
 async function playFreeGame(browser, url, backend, n) {
   const context = await browser.newContext({ serviceWorkers: 'block' });
@@ -290,36 +302,43 @@ async function playFreeGame(browser, url, backend, n) {
     let pausas = 0, leituras = 1;
 
     const moves = [];
+    let abandono = null;
     while (!S.done) {
       if (stopping) throw new Error('interrompido');
-      const m = await Livre.freeMove(backend, S, { dicts, v: cfg.v });
-      let word = m.word, res = await submitFree(page, word, S.guesses.length);
+      const rodada = S.guesses.length + 1;
       const recusadasPeloJogo = [];
-      // não deveria acontecer (validamos com os mesmos dicionários), mas: apaga e sorteia outra
-      for (let k = 0; res !== 'ok' && k < 5; k++) {
-        recusadasPeloJogo.push({ palavra: word, resultado: res });
-        await clearRow(page, Livre.MAX);
-        word = Livre.randomWord(dicts, new Set([...S.guesses.map(g => g.key), ...recusadasPeloJogo.map(x => x.palavra)]));
-        m.fallback = true; m.word = word; m.display = Livre.displayFor(dicts.get(word.length), word, cfg.v);
-        res = await submitFree(page, word, S.guesses.length);
+      // a palavra aceita é digitada dentro de freeMove; se o jogo a recusar (não
+      // deveria: os dicionários são os mesmos), a linha é apagada e o modelo
+      // recebe a recusa como as outras e propõe de novo
+      const submit = async key => {
+        const res = await submitFree(page, key, S.guesses.length);
+        if (res !== 'ok') { recusadasPeloJogo.push({ palavra: key, resultado: res }); await clearRow(page, Livre.MAX); }
+        return res;
+      };
+      const m = await Livre.freeMove(backend, S, { dicts, v: cfg.v, maxPropostas: cfg.maxPropostas, hooks: { submit } });
+      if (process.env.ARENA_DEBUG) for (const p of m.propostas) if (!p.valida) console.error(`  [rodada ${rodada}] ${p.palavra}: ${p.motivo_rejeicao}`);
+      if (m.abandonado) {
+        abandono = Livre.moveRecord(m, { rodada, ...(recusadasPeloJogo.length ? { recusadasPeloJogo } : {}) });
+        break;
       }
-      if (res !== 'ok') throw new Error(`o jogo recusou as palavras: ${recusadasPeloJogo.map(x => x.palavra).join(', ')}`);
       moves.push(Livre.moveRecord(m, recusadasPeloJogo.length ? { recusadasPeloJogo } : {}));
-      if (process.env.ARENA_DEBUG) for (const p of m.propostas) if (!p.valida) console.error(`  [jogada ${moves.length}] ${p.palavra}: ${p.motivo_rejeicao}`);
       S = Livre.assertHidden(await readStateFree(page)); leituras++;
       if (ritmo) { await page.waitForTimeout(ritmo); pausas += ritmo; }
     }
     const tempoTotalMs = Date.now() - t0 - pausas;
     if (ritmo) await page.waitForTimeout(ritmo * 3);
-    const fim = await readFinal(page); // só depois do fim: segredo e tamanho
+    // só depois do fim (ou do abandono): segredo e tamanho
+    const fim = abandono ? await readAbandoned(page) : await readFinal(page);
     return {
       jogo: n, data: new Date().toISOString(), url,
       backend: backend.name, model: backend.model, ...(backend.pensar ? { pensar: true } : {}),
       len: fim.len, modo: 'invisivel', livre: true, variant: cfg.v, tries: cfg.tries,
-      won: !!S.won, tentativas: S.guesses.length,
+      // tentativasMax: o Invisível dá o dobro das tentativas da dificuldade (tries)
+      won: !abandono && !!S.won, tentativas: S.guesses.length, tentativasMax: S.tries,
+      ...(abandono ? { abandonado: true, motivoAbandono: abandono.motivoAbandono, rodadaAbandonada: abandono } : {}),
       guesses: S.guesses.map(g => ({ word: g.word, key: g.key, res: g.res })),
       secret: fim.secret, tempoTotalMs,
-      tempoModeloMs: moves.reduce((s, m) => s + m.latencyMs, 0),
+      tempoModeloMs: Livre.rodadasLivres({ moves, rodadaAbandonada: abandono }).reduce((s, m) => s + m.latencyMs, 0),
       estadoVisto: { campos, leituras, semCamposEscondidos: true },
       moves,
     };
@@ -338,8 +357,8 @@ function printSummary(games, backend) {
   const pad = (s, n) => String(s).padEnd(n);
   console.log('  ' + pad('#', 4) + pad('segredo', 16) + pad('letras', 8) + pad('resultado', 11) + pad('tentativas', 12) + pad('tempo total', 13) + 'tempo modelo');
   for (const g of games) {
-    console.log('  ' + pad(g.jogo, 4) + pad(g.secret, 16) + pad(g.len, 8) + pad(g.won ? 'vitória' : 'derrota', 11) +
-      pad(`${g.tentativas}/${g.tries}`, 12) + pad(secs(g.tempoTotalMs), 13) + secs(g.tempoModeloMs));
+    console.log('  ' + pad(g.jogo, 4) + pad(g.secret, 16) + pad(g.len, 8) + pad(g.abandonado ? 'abandono' : g.won ? 'vitória' : 'derrota', 11) +
+      pad(`${g.tentativas}/${g.tentativasMax ?? g.tries}`, 12) + pad(secs(g.tempoTotalMs), 13) + secs(g.tempoModeloMs));
   }
   const moves = games.flatMap(g => g.moves);
   const won = games.filter(g => g.won);
@@ -348,22 +367,27 @@ function printSummary(games, backend) {
   const tin = moves.reduce((s, m) => s + m.tokens.entrada, 0), tout = moves.reduce((s, m) => s + m.tokens.saida, 0);
   const think = moves.reduce((s, m) => s + (m.thinkTokens || 0), 0);
   if (livre) {
-    const props = moves.reduce((s, m) => s + m.propostas.length, 0);
-    const rej = moves.reduce((s, m) => s + m.invalid, 0);
-    const fb = moves.filter(m => m.fallback).length;
+    const rodadas = games.flatMap(Livre.rodadasLivres);
+    const props = rodadas.reduce((s, m) => s + m.propostas.filter(p => !p.erro).length, 0);
+    const rej = rodadas.reduce((s, m) => s + m.invalid, 0);
+    const errs = rodadas.reduce((s, m) => s + (m.errosBackend || 0), 0);
+    const ab = games.filter(g => g.abandonado).length;
+    const tinL = rodadas.reduce((s, m) => s + m.tokens.entrada, 0), toutL = rodadas.reduce((s, m) => s + m.tokens.saida, 0);
+    const thinkL = rodadas.reduce((s, m) => s + (m.thinkTokens || 0), 0);
     const rowsL = [
       ['Jogos', games.length],
       ['Vitórias', `${won.length} (${fmt(100 * won.length / games.length)}%)`],
       ['Média de tentativas (todos)', fmt(games.reduce((s, g) => s + g.tentativas, 0) / games.length, 2)],
       ['Média de tentativas (vitórias)', won.length ? fmt(won.reduce((s, g) => s + g.tentativas, 0) / won.length, 2) : '-'],
       ['Tempo médio total por jogo', secs(games.reduce((s, g) => s + g.tempoTotalMs, 0) / games.length)],
-      ['Latência média por jogada', `${fmt(moves.reduce((s, m) => s + m.latencyMs, 0) / moves.length, 1)} ms (todas as propostas)`],
+      ['Latência média por jogada', moves.length ? `${fmt(moves.reduce((s, m) => s + m.latencyMs, 0) / moves.length, 1)} ms (todas as propostas)` : '-'],
       ['Jogadas', moves.length],
       ['Propostas do modelo', props],
       ['Propostas rejeitadas', `${rej} (${fmt(100 * rej / Math.max(1, props))}% das propostas)`],
-      ['Jogadas por sorteio (fallback)', `${fb} (${fmt(100 * fb / moves.length)}%)`],
-      ['Tokens entrada / saída', `${fmt(tin)} / ${fmt(tout)}`],
-      ['Tokens de raciocínio (aprox.)', fmt(think)],
+      ...(errs ? [['Pedidos com erro do backend', errs]] : []),
+      ['Partidas abandonadas', `${ab} (${fmt(100 * ab / games.length)}%)`],
+      ['Tokens entrada / saída', `${fmt(tinL)} / ${fmt(toutL)}`],
+      ['Tokens de raciocínio (aprox.)', fmt(thinkL)],
     ];
     console.log('');
     for (const [k, v] of rowsL) console.log('  ' + pad(k, 34) + v);
@@ -432,9 +456,19 @@ async function main() {
       fs.appendFileSync(outFile, JSON.stringify(g) + '\n');
       const seq = g.guesses.map(x => x.word.toUpperCase()).join(' > ');
       if (livre) {
-        const rej = g.moves.reduce((s, m) => s + m.invalid, 0), fb = g.moves.filter(m => m.fallback).length;
-        console.log(`  jogo ${i} (invisível (livre)): ${g.won ? 'vitória' : 'derrota'} em ${g.tentativas}/${g.tries} (${secs(g.tempoTotalMs)}) ${seq}  [segredo: ${g.secret}, ${g.len} letras; ${rej} propostas rejeitadas, ${fb} por sorteio]`);
-        g.moves.forEach((m, j) => console.log(`     ${j + 1}. ${m.palavra.toUpperCase()}${m.fallback ? ' (sorteio)' : ''} · ${m.latencyMs} ms · propostas: ${m.propostas.map(p => `${p.palavra ?? '∅'}${p.valida ? ' ✓' : ` ✗ (${p.motivo_rejeicao})`}`).join(', ')}${m.thinkTokens ? ` · raciocínio ~${m.thinkTokens} tokens` : ''}`));
+        const rej = Livre.rodadasLivres(g).reduce((s, m) => s + m.invalid, 0);
+        const ab = g.rodadaAbandonada;
+        const nAb = ab ? ab.propostas.filter(p => !p.erro).length : 0;
+        const nErr = ab?.errosBackend || 0;
+        const apos = [nAb ? `${nAb} ${nAb === 1 ? 'proposta' : 'propostas'}` : '', nErr ? `${nErr} ${nErr === 1 ? 'pedido' : 'pedidos'} com erro` : ''].filter(Boolean).join(' e ');
+        const res = ab ? `abandonada na ${ab.rodada}.ª rodada após ${apos} (${g.motivoAbandono})`
+          : `${g.won ? 'vitória' : 'derrota'} em ${g.tentativas}/${g.tentativasMax ?? g.tries}`;
+        console.log(`  jogo ${i} (invisível (livre)): ${res} (${secs(g.tempoTotalMs)}) ${seq}  [segredo: ${g.secret}, ${g.len} letras; ${rej} propostas recusadas]`);
+        const props = m => m.propostas.map(p => `${p.palavra ?? '∅'}${p.valida ? ' ✓' : ` ✗ (${p.motivo_rejeicao})`}`).join(', ');
+        const meta = m => `${fmt(m.latencyMs)} ms · tokens ${fmt(m.tokens.entrada)}/${fmt(m.tokens.saida)}${m.thinkTokens ? ` · raciocínio ~${m.thinkTokens} tokens` : ''}`;
+        const rec = n => (n ? ` (${n} ${n === 1 ? 'proposta recusada' : 'propostas recusadas'})` : '');
+        g.moves.forEach((m, j) => console.log(`     J${i}.${j + 1} ${m.palavra.toUpperCase()}${rec(m.invalid)} ${meta(m)} · propostas: ${props(m)}`));
+        if (ab) console.log(`     J${i}.${ab.rodada} abandonou${rec(ab.invalid)} ${meta(ab)} · propostas: ${props(ab)}`);
       } else console.log(`  jogo ${i} (${g.len} letras): ${g.won ? 'vitória' : 'derrota'} em ${g.tentativas}/${g.tries} (${secs(g.tempoTotalMs)}) ${seq}  [segredo: ${g.secret}]`);
     } catch (e) {
       if (stopping) break;

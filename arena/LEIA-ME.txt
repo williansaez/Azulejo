@@ -16,10 +16,12 @@ ARQUIVOS
 index.html           página para assistir: dois agentes jogam lado a lado
                      (duelo), com cronômetro, opções, registro e placar
 servir.mjs           servidor local da página (raiz do repositório) com
-                     proxies /ollama e /typesafe (sem CORS, chave no servidor)
+                     proxies /ollama, /ollama2 e /typesafe (sem CORS, chave no
+                     servidor)
 jogar.mjs            linha de comando: abre o jogo (Playwright), joga e mede
 livre.mjs            modo livre (Invisível): estado visível para o modelo,
-                     validação das propostas, novas tentativas e sorteio
+                     validação das propostas, novos pedidos até uma palavra
+                     válida e abandono no limite (sem sorteio)
 solver.mjs           lógica pura: norm, score (igual ao jogo), loadDict
                      (dicionario/<n>.json), candidates, suggest (entropia ou
                      heurística), describeOptions, describeState
@@ -97,6 +99,9 @@ Opções:
                               para dar tempo de ver; não conta no tempo medido
                               (com --visivel o padrão é 900; sem, 0)
   --saida PASTA               onde gravar os .jsonl (padrão arena/resultados)
+  --max-propostas N           Invisível: quantas propostas o modelo pode fazer
+                              numa rodada antes de abandonar a partida
+                              (padrão 25; ver MODO INVISÍVEL (LIVRE))
 
 Para assistir ao agente jogando:
   node arena/jogar.mjs --backend code --jogos 3 --local --visivel
@@ -114,11 +119,17 @@ Testes com servidores falsos (provam o caminho de pedido e resposta):
   Modo livre com o mock (ele responde palavras comuns de uma lista fixa,
   conferidas nos dicionários ao iniciar, sem repetir as já tentadas):
   OLLAMA_URL=http://127.0.0.1:11435 node arena/jogar.mjs --backend ollama --letras invisivel --jogos 2 --local
-  Com MOCK_MODO=invalido o mock responde sempre "qzxwv" (3 propostas
-  recusadas e sorteio em toda jogada); com MOCK_MODO=misto erra a primeira
-  proposta de cada rodada e acerta a segunda. Com think: true o mock devolve
-  também message.thinking (teste do --pensar). O mock não sabe o segredo:
-  só acerta por acaso.
+  O mock lê as recusadas da rodada na mensagem ("- PALAVRA: motivo") e
+  nunca repete uma delas. Com MOCK_MODO=invalido responde sempre uma
+  não-palavra nova (qzxwa, qzxwb, …), e a partida é abandonada no limite:
+  MOCK_MODO=invalido node arena/test/mock-ollama.mjs 11436 &
+  OLLAMA_URL=http://127.0.0.1:11436 node arena/jogar.mjs --backend ollama --letras invisivel --jogos 1 --local --max-propostas 5
+  Com MOCK_MODO=teimoso erra as 3 primeiras propostas de cada rodada (uma
+  não-palavra, uma com hífen e uma curta demais) e acerta a 4.ª: mostra o
+  caminho da insistência (3 recusadas + 1 aceita em toda jogada). Com
+  MOCK_MODO=misto erra a primeira proposta de cada rodada e acerta a
+  segunda. Com think: true o mock devolve também message.thinking (teste do
+  --pensar). O mock não sabe o segredo: só acerta por acaso.
 
 
 ASSISTIR PELO NAVEGADOR
@@ -158,6 +169,8 @@ Rodar localmente (Node 20+, sem dependências):
 
 O servidor serve a raiz do repositório e faz de proxy:
   /ollama/*    -> OLLAMA_URL   (padrão http://localhost:11434)
+  /ollama2/*   -> OLLAMA_URL2  (padrão OLLAMA_URL): um segundo Ollama, para
+                  um lado do duelo usar outra máquina ou porta
   /typesafe/*  -> TYPESAFE_URL (padrão https://api.typesafe.ai), acrescentando
                   Authorization: Bearer $TYPESAFE_API_KEY se a variável existir
                   e o pedido não trouxer chave
@@ -186,6 +199,7 @@ para gravar resultados em arena/resultados.
 VARIÁVEIS DE AMBIENTE
 ---------------------
 OLLAMA_URL          base do Ollama (padrão http://localhost:11434)
+OLLAMA_URL2         servir.mjs: destino de /ollama2 (padrão OLLAMA_URL)
 TYPESAFE_URL        base da API TypeSafe (padrão https://api.typesafe.ai)
 TYPESAFE_API_KEY    chave da TypeSafe (Authorization: Bearer ...)
 ARENA_TIMEOUT_MS    tempo limite de cada chamada ao modelo (padrão 120000)
@@ -299,10 +313,13 @@ Diferença do "primeiro o código": aqui o código NÃO enumera candidatas, não
 calcula entropia nem sugere palavras. O modelo recebe só o que um jogador
 humano vê e inventa cada palpite. O ctx do modelo (pickFree/chooseFree) é:
   { regras, rodada, tentativas (máximo),
-    historico: [{numero, palavra, letras: [{letra, estado: 'existe'|'não existe'}]}],
+    historico: [{numero, palavra, letras: [{letra, estado: 'certa'|'existe'|'não existe'}]}],
     letras_que_existem, letras_que_nao_existem, palavras_ja_tentadas,
+    letras_certas_por_posicao: [{posicao, letra}],
     dica_tamanho (n na última tentativa, senão null),
-    tentativas_invalidas_nesta_rodada: [{palavra, motivo}] }
+    tentativas_invalidas_nesta_rodada: [{palavra, motivo}] (TODAS as
+      recusadas desta rodada, com o motivo),
+    proposta_nesta_rodada, max_propostas_por_rodada }
 O estado vem de az-cur SEM len, secret e key (removidos dentro da página;
 livre.mjs/assertHidden confere a cada leitura e o jogar.mjs imprime os
 campos vistos no início de cada jogo e grava estadoVisto no registro). O
@@ -316,8 +333,15 @@ sai na hora com "este backend não joga no modo livre"; na página, ao
 escolher Invisível, os dois lados passam para Ollama (o modelo e a URL do
 campo ficam) e Código/Jev aparecem desativados com uma nota.
 
-Pedido ao Ollama: prompt de sistema em português com as regras, mensagem do
-usuário com o estado em linhas simples, e format = JSON Schema
+Pedido ao Ollama: prompt de sistema em português com as regras (só valem
+palavras que existem num dicionário de português, numa palavra só, sem
+espaços nem hífens; uma proposta recusada nunca deve ser repetida; não há
+sorteio e, depois de muitas recusas, a partida é abandonada), mensagem do
+usuário com o estado em linhas simples e, a partir da segunda proposta da
+rodada, a lista das recusadas, uma por linha ("- QZXWV: não está no
+dicionário"), seguida de "Proponha uma palavra diferente de todas as
+recusadas." e "Esta é a proposta k de no máximo N nesta rodada."; e
+format = JSON Schema
 {palavra: string 4..16, motivo: string}. Com --pensar (ou "Pensar" na
 página) vai think: true; thinkTokens é uma aproximação: o /api/chat não
 separa os tokens de raciocínio, então usa-se eval_count vezes a fração de
@@ -327,36 +351,68 @@ usado).
 Validação (no harness, livre.mjs, não no backend). Uma proposta é válida se,
 depois de norm (sem acentos e cedilha), for só letras a-z, tiver 4 a 13
 letras, estiver no dicionário do seu tamanho (dicionario/<n>.json, chaves
-de w e x, o mesmo que o jogo usa) e ainda não tiver sido tentada neste jogo.
-Se for recusada ("não está no dicionário", "já foi tentada", "tamanho fora
-de 4 a 13", "não é uma palavra só de letras"), o modelo é chamado de novo
-com tentativas_invalidas_nesta_rodada preenchida, até 3 propostas por
-jogada. Se as 3 falharem (ou derem erro de rede/JSON), a jogada é um
-SORTEIO (fallback): um tamanho de 4 a 13 ao acaso e, nele, uma palavra ao
-acaso ainda não tentada, sem filtrar pelas letras conhecidas (não é uma
-escolha informada). A palavra é digitada sem acentos (letras + Enter); se o
-dicionário daquele tamanho ainda não estava carregado no jogo, aparece
-"Carregando dicionário…" e o harness espera até 15 s pelo envio automático.
-Se mesmo assim o jogo recusasse a palavra, o harness apaga a linha e sorteia
-outra (não deveria acontecer: os dicionários são os mesmos).
+de w e x, o mesmo que o jogo usa), ainda não tiver sido tentada neste jogo
+e não tiver sido recusada nesta rodada. Se for recusada ("não está no
+dicionário", "já foi tentada", "já foi recusada nesta rodada", "tamanho
+fora de 4 a 13", "não é uma palavra só de letras"), o modelo é chamado de
+novo com tentativas_invalidas_nesta_rodada preenchida com TODAS as
+recusadas da rodada, e assim por diante até ele propor uma palavra válida.
 
-Métricas novas, por jogada (moves): word (o que foi digitado), palavra
-(forma acentuada do dicionário), invalid (quantas propostas foram recusadas
-nesta jogada), propostas [{palavra, valida, motivo_rejeicao?, motivo?}],
-fallback, thinkTokens, motivo, tokens {entrada, saida} e latencyMs (somados
-sobre todas as propostas da jogada). Por jogo: modo "invisivel", livre: true,
-pensar (se ligado), len e secret (lidos só no fim). O resumo do jogar.mjs
-mostra "Propostas do modelo", "Propostas rejeitadas", "Jogadas por sorteio
-(fallback)" e "Tokens de raciocínio (aprox.)", e cada jogo aparece como
-"invisível (livre)" com as propostas de cada jogada. Na página, o painel ao
-vivo troca a tabela de opções pela visão do modelo (letras que existem e
-que não existem, tentativas, dica de tamanho), as propostas da rodada com
-motivo, latência e tokens (recusadas em vermelho, com o motivo), e o
-registro mostra, por exemplo, "J3.2 PORTAL (2 propostas rejeitadas)
-1.240 ms · tokens …". O placar ganha "Propostas rejeitadas" e "Jogadas por
-sorteio" (e "Tokens de raciocínio" quando houver). Nas jogadas do modo
-livre, "Respostas inválidas" conta as jogadas com pelo menos uma proposta
-recusada e "Igual ao código" não se aplica (-).
+NÃO HÁ SORTEIO: nenhuma palavra é escolhida pelo código; toda tentativa
+digitada foi proposta pelo modelo. A palavra aceita é digitada sem acentos
+(letras + Enter); se o dicionário daquele tamanho ainda não estava carregado
+no jogo, aparece "Carregando dicionário…" e o harness espera até 15 s pelo
+envio automático. Se mesmo assim o jogo recusasse a palavra (não deveria:
+os dicionários são os mesmos), a linha é apagada e a recusa volta para o
+modelo como as outras ("o jogo recusou a palavra (…)").
+
+Limite e abandono. Para não pedir para sempre, cada rodada aceita no
+máximo maxPropostas propostas (padrão 25; --max-propostas N no jogar.mjs,
+"Máx. propostas por rodada" na página, que só aparece no Invisível). Se o
+limite chega sem palavra válida, o modelo ABANDONA a partida: nada é
+digitado, o jogo é registrado com abandonado: true, won: false, tentativas
+= tentativas feitas até ali e motivoAbandono = "o modelo não produziu uma
+palavra válida em N propostas", e a arena passa ao jogo seguinte (no jogo,
+uma partida em curso conta como derrota quando outra começa). Erros do
+backend (rede, HTTP, JSON, resposta sem palavra) ficam em propostas com
+erro: true, mas não contam como propostas; se acontecerem N vezes
+seguidas (ex.: Ollama desligado), a partida também é abandonada, com
+motivoAbandono = "o backend falhou em N pedidos seguidos: <erro>". O
+segredo e o tamanho de uma partida abandonada são lidos só depois do
+abandono (o agente já não digita nada).
+
+Métricas, por jogada (moves): word (o que foi digitado), palavra (forma
+acentuada do dicionário), invalid (quantas propostas foram recusadas nesta
+jogada), propostas [{palavra, valida, motivo_rejeicao?, motivo?, erro?}],
+errosBackend (se houve), thinkTokens, motivo, tokens {entrada, saida} e
+latencyMs (somados sobre todas as propostas da jogada). Por jogo: modo
+"invisivel", livre: true, pensar (se ligado), len e secret (lidos só no fim
+ou depois do abandono), tentativasMax (o Invisível dá o dobro das tentativas
+da dificuldade; tries guarda a dificuldade) e, se houve abandono,
+abandonado, motivoAbandono e rodadaAbandonada (o mesmo formato de uma
+jogada, com word null, rodada e as propostas recusadas; entra nas contas de
+propostas e tokens). O resumo do jogar.mjs mostra "Propostas do modelo",
+"Propostas rejeitadas", "Partidas abandonadas" (quantas e %), "Pedidos com
+erro do backend" (se houve) e "Tokens de raciocínio (aprox.)"; cada jogo
+aparece como "invisível (livre)", com "abandonada na 5.ª rodada após 25
+propostas (…)" quando for o caso, e cada jogada numa linha como
+"J3.1 PORTAL (4 propostas recusadas) 1.240 ms · tokens …" com as propostas.
+
+Na página, o painel ao vivo troca a tabela de opções pela visão do modelo
+(letras certas, que existem e que não existem, tentativas, dica de
+tamanho) e pela lista das propostas da rodada, com motivo, latência e
+tokens: a aceita em verde, as recusadas em vermelho com o motivo, e um
+contador "proposta 7 de 25". Quando um lado abandona, o painel mostra
+"Abandonou a partida: …", o lado ganha o selo "abandonou" e a entrada na
+lista de jogos diz "abandonou na 1.ª rodada após 5 propostas". O registro
+mostra "J3.1 PORTAL (4 propostas recusadas) 1.240 ms · tokens …" e uma
+linha por proposta recusada. O placar troca "Jogadas por sorteio" por
+"Partidas abandonadas" (quantas e %), ao lado de "Propostas rejeitadas" (e
+"Tokens de raciocínio" quando houver). Quem ganha: se um lado abandona e o
+outro termina, o outro ganha o jogo (mesmo que tenha errado a palavra); se
+os dois abandonam, é empate; senão vale a regra de sempre. Nas jogadas do
+modo livre, "Respostas inválidas" conta as jogadas com pelo menos uma
+proposta recusada e "Igual ao código" não se aplica (-).
 
 Exemplos:
   node arena/jogar.mjs --backend ollama --letras invisivel --jogos 5 --local

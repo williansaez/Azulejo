@@ -33,13 +33,18 @@ const SYSTEM_LIVRE = `Você está jogando "Azulejo das Palavras" no modo Invisí
 Regras:
 - A palavra secreta tem de 4 a 9 letras, mas o tamanho NÃO é mostrado (só na última tentativa o jogo revela quantas letras ela tem).
 - Cada tentativa pode ser qualquer palavra portuguesa do dicionário com 4 a 13 letras (não precisa ter o tamanho da secreta).
+- Só valem palavras que existem num dicionário de português, escritas numa palavra só, sem espaços nem hífens (acentos são permitidos). Nomes próprios, siglas, palavras inventadas ou de outras línguas são recusados.
 - Depois de cada tentativa, cada letra é marcada como "certa" (está nessa mesma posição na palavra secreta), "existe" (aparece noutra posição) ou "não existe". Uma letra certa na posição N também diz que a palavra tem pelo menos N letras.
 - Acentos e cedilha não contam (Á = A, Ç = C).
 - Você ganha quando escrever exatamente a palavra secreta. Há um número limitado de tentativas.
 Como jogar bem:
 - Use as letras que existem e evite as que não existem; tentativas no começo podem servir para descobrir letras.
 - Prefira palavras comuns do português.
-- Nunca repita uma palavra já tentada nem uma proposta já recusada.
+- Nunca repita uma palavra já tentada.
+Propostas recusadas:
+- Se a sua proposta for recusada, o jogo pede outra e mostra todas as propostas recusadas nesta rodada, com o motivo de cada uma.
+- Uma proposta recusada NUNCA deve ser repetida: proponha sempre uma palavra diferente de todas as recusadas.
+- Não há sorteio: o jogo só avança com uma palavra válida dada por você. Se você não der uma palavra válida depois de muitas propostas, a partida é abandonada e conta como derrota.
 Responda APENAS com JSON no formato {"palavra": "<sua tentativa>", "motivo": "<frase curta>"}.
 A palavra deve ser UMA palavra portuguesa, sem espaços nem hífens; acentos são permitidos. Não escreva mais nada.`;
 
@@ -58,9 +63,13 @@ function userMessageLivre(ctx) {
   lines.push(`Palavras já tentadas (não repita): ${lista(ctx.palavras_ja_tentadas)}.`);
   lines.push(ctx.dica_tamanho ? `Dica da última tentativa: a palavra secreta tem ${ctx.dica_tamanho} letras.`
     : 'O tamanho da palavra secreta não foi revelado (tem de 4 a 9 letras).');
-  if (ctx.tentativas_invalidas_nesta_rodada?.length) {
-    lines.push(`Propostas recusadas nesta rodada (não repita): ${ctx.tentativas_invalidas_nesta_rodada.map(t => `${t.palavra} (${t.motivo})`).join(', ')}.`);
+  const recusadas = ctx.tentativas_invalidas_nesta_rodada || [];
+  if (recusadas.length) {
+    lines.push('', `Propostas recusadas nesta rodada (${recusadas.length}; não repita nenhuma):`);
+    for (const t of recusadas) lines.push(`- ${t.palavra}: ${t.motivo}`);
+    lines.push('Proponha uma palavra diferente de todas as recusadas.');
   }
+  if (ctx.max_propostas_por_rodada) lines.push(`Esta é a proposta ${ctx.proposta_nesta_rodada ?? recusadas.length + 1} de no máximo ${ctx.max_propostas_por_rodada} nesta rodada.`);
   lines.push('', 'Responda só com o JSON {"palavra": "...", "motivo": "..."}.');
   return lines.join('\n');
 }

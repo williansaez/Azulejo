@@ -76,7 +76,7 @@ td.n,th.n{text-align:right}
 .side-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .side-head h2{font:800 20px var(--display);margin:0}
 .badge{border-radius:999px;padding:2px 10px;font:700 12px var(--body);background:var(--key);color:var(--key-ink)}
-.badge.first{background:var(--ok);color:var(--on-color)}
+.badge.first{background:var(--ok);color:var(--on-color)} .badge.bad{background:var(--off);color:var(--off-ink)}
 .frame{display:block;width:100%;max-width:440px;margin:0 auto;height:min(660px,calc(100vh - 32px));min-height:520px;border:1px solid var(--line);border-radius:18px;background:var(--ground);box-shadow:0 8px 28px rgba(22,34,58,.12)}
 .live{display:flex;flex-wrap:wrap;gap:8px 20px;align-items:flex-end}
 .clock{font:800 clamp(34px,5vw,46px)/1 var(--display);font-variant-numeric:tabular-nums;color:var(--cobalt);letter-spacing:-.02em}
@@ -119,7 +119,11 @@ tr.pick td.w{color:var(--cobalt)}
 .props{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:13px}
 .props li{border-left:3px solid var(--cobalt);background:var(--cobalt-soft);border-radius:6px;padding:5px 9px}
 .props li b{font-family:var(--display);letter-spacing:.04em}
+.props li.ok{border-color:var(--ok);background:transparent}
+.props li.ok b{color:var(--ok)}
 .props li.bad{border-color:var(--off);background:transparent;color:var(--off)}
+.props li.quit{border-color:var(--off);background:var(--off);color:var(--off-ink);font-weight:600}
+.propcount{float:right;font:600 12px var(--body);color:var(--muted);font-variant-numeric:tabular-nums}
 .props li.fb{border-color:var(--near);background:transparent}
 .props li.wait{border-color:var(--line);background:transparent;color:var(--muted)}
 @media (max-width:900px){ .duel{grid-template-columns:minmax(0,1fr);grid-auto-flow:row;grid-template-rows:none} .side{grid-row:auto;grid-template-rows:none} }
@@ -147,6 +151,7 @@ tr.pick td.w{color:var(--cobalt)}
       <label><span class="lbl">Número de jogos</span><input data-c="jogos" type="number" min="1" max="500"></label>
       <label><span class="lbl">Ritmo (ms)</span><input data-c="ritmo" type="number" min="0" step="100"></label>
       <label><span class="lbl">Opções por jogada</span><input data-c="k" type="number" min="2" max="20"></label>
+      <label data-livre hidden title="Invisível: quantas propostas o modelo pode fazer numa rodada; no limite sem palavra válida, abandona a partida"><span class="lbl">Máx. propostas por rodada</span><input data-c="maxPropostas" type="number" min="1" max="500"></label>
     </form>
     <div class="btns">
       <button class="btn" id="start" type="button">Começar</button>
@@ -166,7 +171,7 @@ tr.pick td.w{color:var(--cobalt)}
       <thead><tr><th></th><th class="n">Esquerda</th><th class="n">Direita</th></tr></thead>
       <tbody id="board"></tbody>
     </table></div>
-    <p class="help">Ganha o jogo quem acerta em menos tentativas; com as mesmas tentativas, ganha o menor tempo; se os dois falham, é empate.</p>
+    <p class="help">Ganha o jogo quem acerta em menos tentativas; com as mesmas tentativas, ganha o menor tempo; se os dois falham, é empate. No Invisível, quem abandona a partida (sem palavra válida no limite de propostas) perde; se os dois abandonam, é empate.</p>
   </section>
 
   <div class="duel" id="duel"><div id="slotL"></div><div id="slotR"></div></div>
@@ -209,7 +214,7 @@ tr.pick td.w{color:var(--cobalt)}
       <div class="freeview" data-k="freeView" hidden>
         <div><span class="lbl">O que o modelo vê: letras</span><div class="chips" data-k="fvLetters"><span class="empty">Nenhuma letra conhecida ainda.</span></div></div>
         <div><span class="lbl">Tentativas</span><ol class="fvhist" data-k="fvHist"><li class="empty">Ainda não houve tentativas.</li></ol></div>
-        <div><span class="lbl">Propostas do modelo nesta rodada</span><ul class="props" data-k="fvProps"><li class="wait">As palavras que o modelo propõe aparecem aqui, com as recusadas em vermelho.</li></ul></div>
+        <div><span class="lbl">Propostas do modelo nesta rodada <span class="propcount" data-k="fvCount"></span></span><ul class="props" data-k="fvProps"><li class="wait">As palavras que o modelo propõe aparecem aqui: a aceita em verde, as recusadas em vermelho com o motivo.</li></ul></div>
       </div>
       <div class="tablewrap" data-k="optsWrap"><table>
         <thead><tr><th>Palavra</th><th>Pode ser a resposta</th><th class="n">Bits</th><th>Restantes em média</th><th class="n">Heurística</th><th>Chance agora</th></tr></thead>
@@ -267,12 +272,12 @@ const SIDE_DEFAULTS = {
   jevUrl: LOCAL ? '/typesafe' : 'https://api.typesafe.ai', jevKey: '', jevModel: 'jev-latest',
 };
 const DEFAULTS = {
-  len: '5', v: 'pt', tries: '6', jogos: '3', ritmo: '800', k: '8',
+  len: '5', v: 'pt', tries: '6', jogos: '3', ritmo: '800', k: '8', maxPropostas: String(Livre.MAX_PROPOSTAS),
   esquerda: { backend: 'jev', ...SIDE_DEFAULTS }, direita: { backend: 'ollama', ...SIDE_DEFAULTS },
 };
 const HELP = {
   code: 'Linha de base sem rede: escolhe sempre a primeira opção do código (maior informação esperada; com milhares de palavras possíveis, maior pontuação heurística).',
-  ollama: 'URL "/ollama" usa o proxy do node arena/servir.mjs (sem CORS). Uma URL direta exige iniciar o Ollama com OLLAMA_ORIGINS igual à origem desta página (ou "*"). "Pensar" manda think: true (modelos com raciocínio).',
+  ollama: 'URL "/ollama" usa o proxy do node arena/servir.mjs (sem CORS); "/ollama2" vai para um segundo Ollama (OLLAMA_URL2). Uma URL direta exige iniciar o Ollama com OLLAMA_ORIGINS igual à origem desta página (ou "*"). "Pensar" manda think: true (modelos com raciocínio).',
   jev: 'URL "/typesafe" usa o proxy do node arena/servir.mjs, que acrescenta TYPESAFE_API_KEY. A chave digitada aqui fica guardada só neste navegador.',
 };
 const cfgEls = [...document.querySelectorAll('[data-c]')];
@@ -288,6 +293,7 @@ function readCfg() {
     jogos: Math.max(1, parseInt(c.jogos, 10) || 1),
     ritmo: Math.max(0, parseInt(c.ritmo, 10) || 0),
     k: Math.max(2, parseInt(c.k, 10) || 8),
+    maxPropostas: Math.max(1, parseInt(c.maxPropostas, 10) || Livre.MAX_PROPOSTAS),
   };
 }
 
@@ -503,85 +509,105 @@ class Side {
     return li;
   }
   // Joga um jogo Invisível (já começado com beginFree). O tamanho e a palavra
-  // só são lidos depois de done.
+  // só são lidos depois de done (ou do abandono). Sem sorteio: o modelo propõe
+  // até dar uma palavra válida; no limite (cfg.maxPropostas) abandona a partida.
   async playFree(cfg, n, dicts) {
     const backend = this.backend;
-    this.log(`Jogo ${n} · ${BACKEND_LABEL[backend.name]} (${backend.model}${backend.pensar ? ', pensar' : ''}) · invisível (livre)`, 'game');
+    const maxP = cfg.maxPropostas;
+    this.log(`Jogo ${n} · ${BACKEND_LABEL[backend.name]} (${backend.model}${backend.pensar ? ', pensar' : ''}) · invisível (livre) · até ${maxP} propostas por rodada`, 'game');
     this.clock.start();
     const moves = [];
     let S = this.readStateFree();
     if (!S || S.done || S.guesses.length) throw new Error('o jogo não começou limpo');
-    let rejeitadasJogo = 0;
+    let rejeitadasJogo = 0, abandono = null;
+    const nome = p => esc(p.palavra == null ? '(sem palavra)' : String(p.palavra).toUpperCase());
+    const recusadas = k => (k ? ` (${k} ${k === 1 ? 'proposta recusada' : 'propostas recusadas'})` : '');
     this.facts({ fCands: '0' });
     while (!S.done) {
       if (stopping) throw new Error('interrompido');
       const round = S.guesses.length + 1;
-      this.facts({ fMove: `${round} de ${cfg.tries}`, fLat: '…' });
+      this.facts({ fMove: `${round} de ${S.tries}`, fLat: '…' });
       this.q('fvProps').innerHTML = '';
+      this.q('fvCount').textContent = '';
       this.q('choice').hidden = true;
       let waitLi = null;
+      const recusadasPeloJogo = [];
       const hooks = {
         onAsk: (ctx, i) => {
           if (i === 0) this.renderModelView(ctx);
-          this.state(`${BACKEND_LABEL[backend.name]} inventando uma palavra (proposta ${i + 1} de ${Livre.PROPOSTAS})…`);
-          waitLi = this.propLine(`Proposta ${i + 1} de ${Livre.PROPOSTAS}: pedindo ao modelo…`, 'wait');
+          const k = ctx.proposta_nesta_rodada;
+          this.q('fvCount').textContent = `proposta ${k} de ${maxP}`;
+          this.state(`${BACKEND_LABEL[backend.name]} inventando uma palavra (proposta ${k} de ${maxP})…`);
+          waitLi = this.propLine(`Proposta ${k} de ${maxP}: pedindo ao modelo…`, 'wait');
         },
         onProposal: (p, r) => {
-          waitLi?.remove();
+          waitLi?.remove(); waitLi = null;
           const meta = ` · ${fmt(r.latencyMs)} ms · tokens ${fmt(r.tokensIn)}/${fmt(r.tokensOut)}${r.thinkTokens ? ` · pensamento ~${fmt(r.thinkTokens)}` : ''}`;
-          if (p.valida) this.propLine(`<b>${esc(String(p.palavra).toUpperCase())}</b> aceita${meta}${p.motivo ? ` · motivo: ${esc(p.motivo)}` : ''}`);
+          if (p.valida) this.propLine(`<b>${nome(p)}</b> aceita${meta}${p.motivo ? ` · motivo: ${esc(p.motivo)}` : ''}`, 'ok');
           else {
-            rejeitadasJogo++;
-            this.facts({ fCands: fmt(rejeitadasJogo) });
-            this.propLine(`<b>${esc(p.palavra == null ? '(sem palavra)' : String(p.palavra).toUpperCase())}</b> recusada: ${esc(p.motivo_rejeicao)}${meta}${p.motivo ? ` · motivo: ${esc(p.motivo)}` : ''}`, 'bad');
+            if (!p.erro) { rejeitadasJogo++; this.facts({ fCands: fmt(rejeitadasJogo) }); }
+            this.propLine(`<b>${nome(p)}</b> recusada: ${esc(p.motivo_rejeicao)}${meta}${p.motivo ? ` · motivo: ${esc(p.motivo)}` : ''}`, 'bad');
           }
         },
+        // digita a palavra aceita; se o jogo a recusar (não deveria: mesmos
+        // dicionários), apaga a linha e o modelo recebe a recusa e propõe outra
+        submit: async (key, display, p) => {
+          this.q('choice').hidden = false;
+          this.q('choice').innerHTML = `Jogada: <b>${esc(display.toUpperCase())}</b>` + (p.motivo ? ` · motivo: ${esc(p.motivo)}` : '');
+          this.state(`Digitando ${display.toUpperCase()}…`);
+          const res = await this.submitFree(key, S.guesses.length);
+          if (res !== 'ok') {
+            recusadasPeloJogo.push({ palavra: key, resultado: res });
+            this.log(`   ${key.toUpperCase()} recusada pelo jogo (${res}); o modelo propõe outra.`, 'err');
+            await this.clearRow(Livre.MAX);
+            this.q('choice').hidden = true;
+          }
+          return res;
+        },
       };
-      const m = await Livre.freeMove(backend, S, { dicts, v: cfg.v, hooks });
-      if (m.fallback) this.propLine(`Sorteio: <b>${esc(m.display.toUpperCase())}</b> (as ${Livre.PROPOSTAS} propostas foram recusadas; palavra ao acaso de um tamanho ao acaso, sem usar as letras conhecidas)`, 'fb');
+      const m = await Livre.freeMove(backend, S, { dicts, v: cfg.v, hooks, maxPropostas: maxP });
       this.facts({ fLat: `${fmt(m.latencyMs)} ms` });
-      this.q('choice').hidden = false;
-      this.q('choice').innerHTML = `Jogada: <b>${esc(m.display.toUpperCase())}</b> · ${fmt(m.latencyMs)} ms` +
-        (m.invalid ? ` · <span class="tag bad">${m.invalid} ${m.invalid === 1 ? 'proposta rejeitada' : 'propostas rejeitadas'}</span>` : '') +
-        (m.fallback ? ' · <span class="tag">sorteio</span>' : '') + (m.motivo && !m.fallback ? ` · motivo: ${esc(m.motivo)}` : '');
-      this.state(`Digitando ${m.display.toUpperCase()}…`);
-
-      let res = await this.submitFree(m.word, S.guesses.length);
-      const recusadasPeloJogo = [];
-      for (let k = 0; res !== 'ok' && k < 5; k++) { // não deveria acontecer: mesmos dicionários do jogo
-        recusadasPeloJogo.push({ palavra: m.word, resultado: res });
-        this.log(`   ${m.word.toUpperCase()} recusada pelo jogo (${res}); sorteando outra.`, 'err');
-        await this.clearRow(Livre.MAX);
-        const w = Livre.randomWord(dicts, new Set([...S.guesses.map(g => g.key), ...recusadasPeloJogo.map(x => x.palavra)]));
-        Object.assign(m, { word: w, display: Livre.displayFor(dicts.get(w.length), w, cfg.v), fallback: true });
-        res = await this.submitFree(w, S.guesses.length);
+      for (const e of m.erros) { const hint = hintFor(backend.name, e); if (hint) { this.log(`   ${hint}`, 'hint'); break; } }
+      if (m.abandonado) {
+        abandono = Livre.moveRecord(m, { rodada: round, ...(recusadasPeloJogo.length ? { recusadasPeloJogo } : {}) });
+        this.propLine(`Abandonou a partida: ${esc(m.motivoAbandono)}. Nada foi digitado.`, 'quit');
+        this.q('choice').hidden = false;
+        this.q('choice').innerHTML = `<span class="tag bad">abandonou</span> na ${round}.ª rodada · ${esc(m.motivoAbandono)}`;
+        this.log(`J${n}.${round} abandonou${recusadas(m.invalid)} ${fmt(m.latencyMs)} ms · tokens ${fmt(m.tokensIn)}/${fmt(m.tokensOut)} · ${m.motivoAbandono}`, 'err');
+        for (const p of m.propostas) this.log(`   recusada: ${p.palavra == null ? '(sem palavra)' : String(p.palavra).toUpperCase()} (${p.motivo_rejeicao})`, 'err');
+        break;
       }
-      if (res !== 'ok') throw new Error('o jogo recusou as palavras sorteadas');
-      const rec = Livre.moveRecord(m, recusadasPeloJogo.length ? { recusadasPeloJogo } : {});
-      moves.push(rec);
+      this.q('choice').innerHTML = `Jogada: <b>${esc(m.display.toUpperCase())}</b> · ${fmt(m.latencyMs)} ms` +
+        (m.invalid ? ` · <span class="tag bad">${m.invalid} ${m.invalid === 1 ? 'proposta recusada' : 'propostas recusadas'}</span>` : '') +
+        (m.motivo ? ` · motivo: ${esc(m.motivo)}` : '');
+      moves.push(Livre.moveRecord(m, recusadasPeloJogo.length ? { recusadasPeloJogo } : {}));
       S = this.readStateFree();
       const g = S.guesses[S.guesses.length - 1];
-      this.log([`J${n}.${round} ${(g.word || m.word).toUpperCase()}${m.invalid ? ` (${m.invalid} ${m.invalid === 1 ? 'proposta rejeitada' : 'propostas rejeitadas'})` : ''}${m.fallback ? ' (sorteio)' : ''} `, minis(g.res),
-        ` ${fmt(m.latencyMs)} ms · tokens ${fmt(m.tokensIn)}/${fmt(m.tokensOut)}${m.thinkTokens ? ` · pensamento ~${fmt(m.thinkTokens)}` : ''}${m.motivo && !m.fallback ? ` · ${m.motivo}` : ''}`],
-        m.fallback ? 'err' : '');
+      this.log([`J${n}.${round} ${(g.word || m.word).toUpperCase()}${recusadas(m.invalid)} `, minis(g.res),
+        ` ${fmt(m.latencyMs)} ms · tokens ${fmt(m.tokensIn)}/${fmt(m.tokensOut)}${m.thinkTokens ? ` · pensamento ~${fmt(m.thinkTokens)}` : ''}${m.motivo ? ` · ${m.motivo}` : ''}`]);
       for (const p of m.propostas) if (!p.valida) this.log(`   recusada: ${p.palavra == null ? '(sem palavra)' : String(p.palavra).toUpperCase()} (${p.motivo_rejeicao})`, 'err');
-      for (const e of m.erros) { const hint = hintFor(backend.name, e); if (hint) { this.log(`   ${hint}`, 'hint'); break; } }
       if (cfg.ritmo) { this.state('Pausa (ritmo)…'); await this.clock.pause(cfg.ritmo); }
     }
     const tempoTotalMs = this.clock.stop();
     const finishedAt = performance.now();
-    const fim = this.rawState(); // só depois do fim: tamanho e palavra
+    // só depois do fim (ou do abandono: o agente já não digita mais nada): tamanho e palavra
+    const fim = this.rawState();
     this.renderModelView(Livre.buildCtx(S));
-    this.log(`Jogo ${n}: ${S.won ? 'vitória' : 'derrota'} em ${S.guesses.length}/${cfg.tries} (${secs(tempoTotalMs)}) · segredo ${String(fim.secret).toUpperCase()} (${fim.len} letras)`, 'game');
-    this.state(`Fim do jogo ${n}: ${S.won ? 'vitória' : 'derrota'} em ${S.guesses.length}/${cfg.tries}.`);
+    const nAb = abandono ? abandono.propostas.filter(p => !p.erro).length : 0;
+    const resumo = abandono ? `abandonada na ${abandono.rodada}.ª rodada após ${nAb} ${nAb === 1 ? 'proposta' : 'propostas'}`
+      : `${S.won ? 'vitória' : 'derrota'} em ${S.guesses.length}/${S.tries}`;
+    this.log(`Jogo ${n}: ${resumo} (${secs(tempoTotalMs)}) · segredo ${String(fim.secret).toUpperCase()} (${fim.len} letras)`, abandono ? 'err' : 'game');
+    this.state(`Fim do jogo ${n}: ${resumo}${abandono ? ` (${abandono.motivoAbandono})` : ''}.`);
     const game = {
       jogo: n, data: new Date().toISOString(), url: GAME_URL,
       backend: backend.name, model: backend.model, ...(backend.pensar ? { pensar: true } : {}),
       len: fim.len, modo: 'invisivel', livre: true, variant: cfg.v, tries: cfg.tries,
-      won: !!S.won, tentativas: S.guesses.length,
+      won: !abandono && !!S.won, tentativas: S.guesses.length, tentativasMax: S.tries,
+      ...(abandono ? { abandonado: true, motivoAbandono: abandono.motivoAbandono, rodadaAbandonada: abandono } : {}),
       guesses: S.guesses.map(g => ({ word: g.word, key: g.key, res: g.res })),
       secret: fim.secret, tempoTotalMs,
-      tempoModeloMs: moves.reduce((s, m) => s + m.latencyMs, 0),
+      tempoModeloMs: Livre.rodadasLivres({ moves, rodadaAbandonada: abandono }).reduce((s, m) => s + m.latencyMs, 0),
+      maxPropostas: maxP,
       moves,
     };
     return { game, finishedAt };
@@ -684,6 +710,9 @@ const sides = [new Side('esquerda', $('slotL')), new Side('direita', $('slotR'))
 
 // ---------- quem ganhou ----------
 function duelWinner(a, b) {
+  // Invisível: quem abandona perde, seja qual for o resultado do outro lado
+  if (a.abandonado && b.abandonado) return { vencedor: 'empate', criterio: 'os dois abandonaram' };
+  if (a.abandonado || b.abandonado) return { vencedor: a.abandonado ? 'direita' : 'esquerda', criterio: `${a.abandonado ? 'Esquerda' : 'Direita'} abandonou` };
   if (!a.won && !b.won) return { vencedor: 'empate', criterio: 'os dois falharam' };
   if (a.won !== b.won) return { vencedor: a.won ? 'esquerda' : 'direita', criterio: 'só um acertou' };
   if (a.tentativas !== b.tentativas) return { vencedor: a.tentativas < b.tentativas ? 'esquerda' : 'direita', criterio: 'menos tentativas' };
@@ -699,9 +728,13 @@ function sideStats(gs) {
   const pct = (a, b) => b ? `${fmt(100 * a / b)}%` : '-';
   const inv = moves.filter(m => m.invalid).length;
   const coded = moves.filter(m => 'igualAoCodigo' in m), agree = coded.filter(m => m.igualAoCodigo).length;
+  // modo livre: as jogadas digitadas e as rodadas abandonadas (propostas e tokens)
+  const freeGames = gs.filter(g => g.livre), rounds = freeGames.flatMap(Livre.rodadasLivres);
   const free = moves.filter(m => Array.isArray(m.propostas));
-  const props = free.reduce((s, m) => s + m.propostas.length, 0), rej = free.reduce((s, m) => s + m.invalid, 0);
-  const fb = free.filter(m => m.fallback).length, think = moves.reduce((s, m) => s + (m.thinkTokens || 0), 0);
+  const props = rounds.reduce((s, m) => s + m.propostas.filter(p => !p.erro).length, 0), rej = rounds.reduce((s, m) => s + m.invalid, 0);
+  const ab = freeGames.filter(g => g.abandonado).length;
+  const extra = gs.flatMap(g => (g.rodadaAbandonada ? [g.rodadaAbandonada] : []));
+  const think = [...moves, ...extra].reduce((s, m) => s + (m.thinkTokens || 0), 0);
   const last = gs.at(-1);
   return {
     backend: last ? `${BACKEND_LABEL[last.backend] || last.backend} · ${last.model}` : '',
@@ -712,13 +745,13 @@ function sideStats(gs) {
       'Latência média por jogada': moves.length ? `${fmt(avg(moves, m => m.latencyMs), 1)} ms` : '-',
       'Respostas inválidas': moves.length ? `${inv} (${pct(inv, moves.length)})` : '-',
       'Igual ao código': coded.length ? `${agree} (${pct(agree, coded.length)})` : '-',
-      'Tokens entrada / saída': `${fmt(moves.reduce((s, m) => s + m.tokens.entrada, 0))} / ${fmt(moves.reduce((s, m) => s + m.tokens.saida, 0))}`,
+      'Tokens entrada / saída': `${fmt([...moves, ...extra].reduce((s, m) => s + m.tokens.entrada, 0))} / ${fmt([...moves, ...extra].reduce((s, m) => s + m.tokens.saida, 0))}`,
       // modo livre (Invisível)
-      'Propostas rejeitadas': free.length ? `${fmt(rej)} de ${fmt(props)} (${pct(rej, props)})` : '-',
-      'Jogadas por sorteio': free.length ? `${fb} (${pct(fb, free.length)})` : '-',
+      'Propostas rejeitadas': freeGames.length ? `${fmt(rej)} de ${fmt(props)} (${pct(rej, props)})` : '-',
+      'Partidas abandonadas': freeGames.length ? `${ab} (${pct(ab, freeGames.length)})` : '-',
       'Tokens de raciocínio (aprox.)': think ? fmt(think) : '-',
     },
-    free: free.length > 0, think: think > 0,
+    free: freeGames.length > 0, think: think > 0,
   };
 }
 function renderResults() {
@@ -731,16 +764,22 @@ function renderResults() {
   $('vsR').innerHTML = `Direita<small>${esc(R.backend)}</small>`;
   // linhas do modo livre e de raciocínio só aparecem quando há jogos/jogadas desse tipo
   const anyFree = L.free || R.free, anyThink = L.think || R.think;
-  const skip = k => (!anyFree && (k === 'Propostas rejeitadas' || k === 'Jogadas por sorteio')) || (!anyThink && k === 'Tokens de raciocínio (aprox.)');
+  const skip = k => (!anyFree && (k === 'Propostas rejeitadas' || k === 'Partidas abandonadas')) || (!anyThink && k === 'Tokens de raciocínio (aprox.)');
   const rows = [['Jogos', fmt(games.length), fmt(games.length)], ['Vencidos no confronto', fmt(wins('esquerda')), fmt(wins('direita'))],
     ...Object.keys(L.rows).filter(k => !skip(k)).map(k => [k, L.rows[k], R.rows[k]])];
   $('board').innerHTML = rows.map(([k, a, b]) => `<tr><td>${k}</td><td class="n">${a}</td><td class="n">${b}</td></tr>`).join('');
-  const sideLine = (s, g) => `<span class="lbl">${SIDE_LABEL[s]}</span><span><span class="tag ${g.won ? 'ok' : 'bad'}">${g.won ? 'vitória' : 'derrota'} ${g.tentativas}/${g.tries}</span>
-    <span class="seq">${esc(g.guesses.map(x => x.word.toUpperCase()).join(' › '))} · ${secs(g.tempoTotalMs)} · ${esc(BACKEND_LABEL[g.backend] || g.backend)}${g.livre ? ` · ${g.moves.reduce((s, m) => s + m.invalid, 0)} propostas rejeitadas, ${g.moves.filter(m => m.fallback).length} por sorteio` : ''}</span></span>`;
+  const sideLine = (s, g) => {
+    const ab = g.rodadaAbandonada, nAb = ab ? ab.propostas.filter(p => !p.erro).length : 0;
+    const tag = g.abandonado ? `abandonou na ${ab?.rodada ?? g.tentativas + 1}.ª rodada após ${nAb} ${nAb === 1 ? 'proposta' : 'propostas'}`
+      : `${g.won ? 'vitória' : 'derrota'} ${g.tentativas}/${g.tentativasMax ?? g.tries}`;
+    const seq = g.guesses.map(x => x.word.toUpperCase()).join(' › ');
+    return `<span class="lbl">${SIDE_LABEL[s]}</span><span><span class="tag ${g.won ? 'ok' : 'bad'}">${esc(tag)}</span>
+    <span class="seq">${seq ? `${esc(seq)} · ` : ''}${secs(g.tempoTotalMs)} · ${esc(BACKEND_LABEL[g.backend] || g.backend)}${g.livre ? ` · ${Livre.rodadasLivres(g).reduce((s, m) => s + m.invalid, 0)} propostas recusadas` : ''}${g.abandonado ? ` · ${esc(g.motivoAbandono)}` : ''}</span></span>`;
+  };
   $('games').innerHTML = games.length ? games.slice().reverse().map(d => `<li>
     <div class="head"><b>#${d.jogo}</b><span>segredo <span class="sec">${esc(d.segredo)}</span>${d.len ? ` · ${d.len} letras${d.modo === 'extremo' ? ' (Extremo)' : d.modo === 'invisivel' ? ' (Invisível, modo livre)' : ''}` : ''}</span>
       <span>${d.vencedor === 'empate' ? '<b>empate</b>' : `vence <b>${SIDE_LABEL[d.vencedor]}</b>`} (${esc(d.criterio)})</span>
-      <span class="help">terminou primeiro: ${SIDE_LABEL[d.primeiroATerminar]}</span></div>
+      <span class="help">${d.primeiroATerminar ? `terminou primeiro: ${SIDE_LABEL[d.primeiroATerminar]}` : 'nenhum lado terminou (abandono)'}</span></div>
     ${sideLine('esquerda', d.lados.esquerda)}${sideLine('direita', d.lados.direita)}</li>`).join('')
     : '<li class="empty">Nenhum jogo terminado ainda.</li>';
 }
@@ -813,6 +852,7 @@ $('start').addEventListener('click', async () => {
       // os dois lados começam juntos, cada um no seu laço assíncrono
       let first = null;
       const settled = await Promise.allSettled(sides.map(s => (free ? s.playFree(cfg, n, dicts) : s.play(cfg, n, D)).then(r => {
+        if (r.game.abandonado) { s.badge('abandonou', 'bad'); return r; } // abandonar não é terminar
         s.badge(first ? 'terminou em 2º' : 'terminou primeiro', first ? '' : 'first');
         first ??= s.name;
         return r;
@@ -848,7 +888,11 @@ $('start').addEventListener('click', async () => {
 for (const el of [...cfgEls, ...document.querySelectorAll('.side .form [data-k]')]) el.addEventListener('change', () => readCfg());
 // Invisível (modo livre): só Ollama; troca os lados e o painel ao mudar as letras.
 const lenSel = document.querySelector('[data-c="len"]');
-function syncMode() { const free = lenSel.value === 'i'; sides.forEach(s => s.applyMode(free)); }
+function syncMode() {
+  const free = lenSel.value === 'i';
+  sides.forEach(s => s.applyMode(free));
+  document.querySelectorAll('[data-livre]').forEach(el => { el.hidden = !free; });
+}
 lenSel.addEventListener('change', () => { syncMode(); readCfg(); });
 syncMode();
 
