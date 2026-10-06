@@ -49,15 +49,23 @@ function proxy(req, res, prefix, { target, key }) {
   const up = lib.request(url, { method: req.method, headers }, upRes => {
     const out = {};
     for (const [k, v] of Object.entries(upRes.headers)) if (!DROP.has(k) && !k.startsWith('access-control-')) out[k] = v;
+    // Streaming sem buffer (stream: true do Ollama, NDJSON): manda os cabeçalhos
+    // já, desliga o Nagle e repassa cada pedaço como chega. Content-Length só
+    // passa se o destino mandou (não é reescrito); sem ele, vai em chunked.
     res.writeHead(upRes.statusCode || 502, out);
-    upRes.pipe(res); // resposta em streaming (inclui stream: true do Ollama)
+    res.flushHeaders();
+    res.socket?.setNoDelay(true);
+    upRes.on('error', () => res.destroy());
+    upRes.pipe(res); // cada pedaço segue assim que chega (pipe não junta)
   });
   up.on('error', e => {
     if (res.headersSent) return res.destroy();
     res.writeHead(502, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: `proxy ${prefix}: sem resposta de ${url.origin} (${e.code || e.message})` }));
   });
-  req.on('aborted', () => up.destroy());
+  // a página desistiu (tempo esgotado, recarregou): cancela o pedido ao modelo,
+  // para o Ollama parar de gerar
+  res.on('close', () => { if (!res.writableFinished) up.destroy(); });
   req.pipe(up); // corpo do pedido em streaming
 }
 
@@ -90,6 +98,9 @@ const server = http.createServer((req, res) => {
   serveStatic(req, res);
 });
 server.on('error', e => { console.error(`Erro: ${e.message}`); process.exit(1); });
+// Um modelo pensando pode levar muitos minutos: sem tempo limite do Node para
+// o pedido inteiro (o limite fica na página: "Tempo máx. por proposta").
+server.requestTimeout = 0;
 server.listen(PORT, HOST, () => {
   const shown = HOST === '127.0.0.1' || HOST === '0.0.0.0' ? 'localhost' : HOST;
   console.log(`Arena do Azulejo: abra http://${shown}:${PORT}/arena/`);

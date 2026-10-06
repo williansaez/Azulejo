@@ -1,9 +1,32 @@
-// Backend Ollama (/api/chat) com saída estruturada.
+// Backend Ollama (/api/chat) com saída estruturada e resposta em streaming.
 //   choose(ctx)      primeiro o código: o modelo só escolhe um id da lista.
 //   chooseFree(ctx)  modo livre (Invisível): o modelo inventa a palavra.
 // opts.pensar = true manda think: true (modelos com raciocínio); por padrão
 // think: false.
-import { postJson, env } from './index.mjs';
+//
+// Streaming (stream: true): lê os pedaços NDJSON, junta message.thinking e
+// message.content e chama ctx.onProgress({ phase, thinkingChars, contentChars,
+// elapsedMs, thinkingTail }) no máximo a cada 250 ms (e a cada 1 s mesmo sem
+// pedaço novo, para o relógio andar). phase: 'aguardando' (nada chegou
+// ainda), 'pensando' ou 'respondendo'. O último pedaço (done: true) traz
+// prompt_eval_count/eval_count. Se o servidor responder um JSON só (sem
+// streaming), funciona igual.
+// Tempo: sem limite total enquanto chegam pedaços; aborta se ficar
+// ARENA_IDLE_MS (padrão 180000) sem nada, ou no teto opts.timeoutMs /
+// ARENA_TIMEOUT_MS (padrão 900000 com pensar, 120000 sem).
+// Tokens: options.num_predict = opts.maxTokens / ARENA_MAX_TOKENS (padrão
+// 4096), para o raciocínio não cortar a resposta.
+// Conteúdo vazio com raciocínio: tenta tirar a resposta do raciocínio (um
+// JSON ou uma palavra no formato esperado); se não der, lança um erro com
+// code 'SO_PENSOU' ("o modelo só pensou e não respondeu") e quem chama
+// (pick/freeMove) pede uma vez de novo com ctx.semFormato: sem format e
+// leitura tolerante ({...} no texto, senão a última palavra de 4 a 13 letras).
+import { postStream, env } from './index.mjs';
+
+export const MAX_TOKENS = 4096;
+export const IDLE_MS = 180000;
+export const TIMEOUT_MS = { pensar: 900000, normal: 120000 };
+const TAIL = 600;
 
 const SYSTEM = `Você está jogando "Azulejo das Palavras", um jogo de adivinhar palavras em português parecido com o Wordle.
 A cada rodada você recebe o estado do jogo (tentativas já feitas e as cores de cada letra) e uma lista curta de opções de palavra, já calculadas por um programa que conhece o dicionário.
@@ -83,69 +106,176 @@ const FORMAT_LIVRE = {
 // Tokens de raciocínio: o /api/chat do Ollama não separa (eval_count soma
 // raciocínio e resposta). Se um dia vier um campo próprio, usa-o; senão,
 // aproxima pela fração de caracteres do raciocínio em eval_count.
-function thinkTokensOf(json) {
-  const own = json?.thinking_eval_count ?? json?.thinking_count;
+function thinkTokensOf(final, thinking, content) {
+  const own = final?.thinking_eval_count ?? final?.thinking_count;
   if (Number.isFinite(own)) return own;
-  const th = json?.message?.thinking;
-  if (typeof th !== 'string' || !th.length) return 0;
-  const out = json.eval_count ?? 0;
-  const content = json?.message?.content ?? '';
-  if (!out) return Math.ceil(th.length / 4);
-  return Math.max(1, Math.round(out * th.length / (th.length + content.length)));
+  if (!thinking) return 0;
+  const out = final?.eval_count ?? 0;
+  if (!out) return Math.ceil(thinking.length / 4);
+  return Math.max(1, Math.round(out * thinking.length / (thinking.length + content.length)));
 }
 
-// opts: { model, baseUrl, pensar } (baseUrl pode ser relativo, ex.: /ollama via servir.mjs)
-export function create({ model, baseUrl, pensar } = {}) {
+const semAcento = w => String(w).toLowerCase().replace(/ç/g, 'c').normalize('NFD').replace(/[̀-ͯ]/g, '');
+const LETRA = 'A-Za-zÀ-ÖØ-öø-ÿ';
+// Tira blocos <think>…</think> que alguns modelos escrevem no próprio conteúdo.
+const semThink = t => String(t || '').replace(/<think>[\s\S]*?(<\/think>|$)/gi, ' ');
+// Objetos {...} simples (sem chaves aninhadas) no texto, do último para o primeiro.
+function objetos(text) {
+  const out = [];
+  for (const m of String(text || '').matchAll(/\{[^{}]*\}/g)) { try { out.push(JSON.parse(m[0])); } catch { /* não é JSON */ } }
+  return out.reverse();
+}
+const palavras = (text, re) => [...String(text || '').matchAll(re)].map(m => m[1]);
+
+// Lê a resposta. modo: 'json' (com format: JSON.parse, senão {...} no texto),
+// 'tolerante' (sem format: {...} no texto, senão a última palavra no formato),
+// 'raciocinio' (conteúdo vazio: procura no raciocínio um {...} ou uma palavra
+// no formato, com critério mais estrito para não pegar palavras soltas).
+// kind: { campo: 'palavra'|'escolha', ids?, evitar? }.
+function lerResposta(text, modo, kind) {
+  const ok = o => o && typeof o === 'object' && typeof o[kind.campo] === 'string' && o[kind.campo].trim() &&
+    (!kind.ids || kind.ids.includes(semAcento(o[kind.campo].trim())));
+  const t = modo === 'raciocinio' ? text : semThink(text);
+  if (modo === 'json') { try { const o = JSON.parse(t); if (o && typeof o === 'object') return o; } catch { /* abaixo */ } }
+  const obj = objetos(t).find(ok);
+  if (obj) return obj;
+  if (modo === 'json') return null;
+  if (kind.ids) {
+    // primeiro o código: a última menção de um dos ids, como palavra solta
+    const ws = palavras(t, new RegExp(`(?<![${LETRA}])([${LETRA}]{2,})(?![${LETRA}])`, 'g'));
+    for (let i = ws.length - 1; i >= 0; i--) { const k = semAcento(ws[i]); if (kind.ids.includes(k)) return { [kind.campo]: k }; }
+    return null;
+  }
+  const evitar = new Set((kind.evitar || []).map(semAcento));
+  // no raciocínio, só palavras em MAIÚSCULAS (o jeito como as tentativas
+  // aparecem no pedido); na resposta sem format, qualquer palavra de 4 a 13
+  const re = modo === 'raciocinio'
+    ? /(?<![A-Za-zÀ-ÖØ-öø-ÿ])([A-ZÀ-ÖØ-Þ]{4,13})(?![A-Za-zÀ-ÖØ-öø-ÿ])/g
+    : new RegExp(`(?<![${LETRA}-])([${LETRA}]{4,13})(?![${LETRA}-])`, 'g');
+  const ws = palavras(t, re).filter(w => !evitar.has(semAcento(w)) && semAcento(w) !== 'json');
+  return ws.length ? { [kind.campo]: ws.at(-1).toLowerCase() } : null;
+}
+
+function erroCom(msg, code, parcial) { const e = new Error(msg); if (code) e.code = code; e.parcial = parcial; return e; }
+
+// opts: { model, baseUrl, pensar, maxTokens, timeoutMs, idleMs } (baseUrl pode
+// ser relativo, ex.: /ollama via servir.mjs)
+export function create({ model, baseUrl, pensar, maxTokens, timeoutMs, idleMs } = {}) {
   const base = (baseUrl || env.OLLAMA_URL || 'http://localhost:11434').replace(/\/$/, '');
   const name = model || 'qwen3.5:9b';
   const think = !!pensar;
-  async function chat(format, system, user) {
+  const numPredict = Math.floor(Number(maxTokens) || Number(env.ARENA_MAX_TOKENS) || MAX_TOKENS);
+  const totalMs = Number(timeoutMs) || Number(env.ARENA_TIMEOUT_MS) || (think ? TIMEOUT_MS.pensar : TIMEOUT_MS.normal);
+  const idle = Number(idleMs) || Number(env.ARENA_IDLE_MS) || IDLE_MS;
+
+  // Um pedido em streaming. Devolve { ans, tokensIn, tokensOut, thinkTokens,
+  // raciocinio, origem, raw } ou lança erro (com e.parcial: tokens e raciocínio).
+  async function chat(ctx, format, system, user, kind) {
+    const semFormato = !!ctx.semFormato;
     const body = {
       model: name,
-      stream: false,
+      stream: true,
       think,
-      options: { temperature: 0 },
-      format,
+      options: { temperature: 0, num_predict: numPredict },
+      ...(semFormato ? {} : { format }),
       messages: [
         { role: 'system', content: system },
-        { role: 'user', content: user },
+        { role: 'user', content: semFormato ? user + '\nEscreva a resposta: só o JSON, numa linha, sem mais nada.' : user },
       ],
     };
-    const r = await postJson(`${base}/api/chat`, body);
-    if (!r.ok) throw new Error(`Ollama HTTP ${r.status}: ${(r.text || '').slice(0, 200)}`);
-    const content = r.json?.message?.content;
-    if (typeof content !== 'string') throw new Error('resposta sem message.content');
-    let ans;
-    try { ans = JSON.parse(content); } catch { throw new Error(`conteúdo não é JSON: ${content.slice(0, 120)}`); }
-    const thinking = r.json?.message?.thinking;
-    return {
-      ans,
-      tokensIn: r.json.prompt_eval_count ?? 0,
-      tokensOut: r.json.eval_count ?? 0,
-      thinkTokens: think ? thinkTokensOf(r.json) : 0,
-      raw: think && typeof thinking === 'string' ? { content, thinkingChars: thinking.length } : content,
+    const onProgress = typeof ctx.onProgress === 'function' ? ctx.onProgress : null;
+    const t0 = performance.now();
+    let thinking = '', content = '', final = null, erroOllama = null, lastEmit = -Infinity;
+    const emit = force => {
+      if (!onProgress) return;
+      const now = performance.now();
+      if (!force && now - lastEmit < 250) return;
+      lastEmit = now;
+      const phase = content ? 'respondendo' : thinking ? 'pensando' : 'aguardando';
+      try {
+        onProgress({ phase, thinkingChars: thinking.length, contentChars: content.length, elapsedMs: Math.round(now - t0),
+          thinkingTail: thinking.slice(-TAIL), semFormato });
+      } catch { /* o painel não deve derrubar o pedido */ }
     };
+    const beat = onProgress ? setInterval(() => { if (performance.now() - lastEmit >= 1000) emit(true); }, 1000) : null;
+    emit(true);
+    let r;
+    try {
+      r = await postStream(`${base}/api/chat`, body, {
+        idleMs: idle, totalMs, signal: ctx.signal,
+        onChunk: obj => {
+          if (obj?.error) { erroOllama = String(obj.error); return; }
+          const m = obj?.message || {};
+          if (typeof m.thinking === 'string') thinking += m.thinking;
+          if (typeof m.content === 'string') content += m.content;
+          if (obj?.done) final = obj;
+          emit(false);
+        },
+      });
+    } catch (e) {
+      // tempo esgotado, rede, interrompido: guarda o raciocínio que já chegou
+      throw erroCom(e.message || String(e), null, { tokensIn: 0, tokensOut: 0, thinkTokens: thinking ? Math.ceil(thinking.length / 4) : 0, raciocinio: thinking || null });
+    } finally { if (beat) clearInterval(beat); }
+    emit(true);
+    const tokens = {
+      tokensIn: final?.prompt_eval_count ?? 0,
+      tokensOut: final?.eval_count ?? 0,
+      thinkTokens: think || thinking ? thinkTokensOf(final, thinking, content) : 0,
+      raciocinio: thinking || null,
+    };
+    if (!r.ok) {
+      let msg = r.text || '';
+      try { msg = JSON.parse(msg).error || msg; } catch { /* texto */ }
+      throw erroCom(`Ollama HTTP ${r.status}: ${String(msg).slice(0, 200)}`, null, tokens);
+    }
+    if (erroOllama) throw erroCom(`Ollama: ${erroOllama.slice(0, 200)}`, null, tokens);
+    const raw = {
+      content: content.slice(0, 500), thinkingChars: thinking.length,
+      ...(final?.done_reason ? { doneReason: final.done_reason } : {}),
+      ...(Number.isFinite(final?.eval_duration) ? { evalDurationMs: Math.round(final.eval_duration / 1e6) } : {}),
+      ...(semFormato ? { semFormato: true } : {}),
+    };
+    let ans = null, origem = semFormato ? 'sem-format' : null;
+    if (content.trim()) {
+      ans = lerResposta(content, semFormato ? 'tolerante' : 'json', kind);
+      if (!ans) {
+        if (final?.done_reason === 'length') throw erroCom(`resposta cortada: aumente o limite de tokens (agora ${numPredict}; --max-tokens ou "Limite de tokens")`, 'CORTADA', tokens);
+        throw erroCom(semFormato ? `resposta sem ${kind.campo} legível: ${content.slice(0, 120)}` : `conteúdo não é JSON: ${content.slice(0, 120)}`, null, tokens);
+      }
+    } else {
+      // conteúdo vazio: a resposta pode ter ficado no raciocínio
+      ans = thinking ? lerResposta(thinking, 'raciocinio', kind) : null;
+      if (ans) origem = 'raciocinio';
+      else if (final?.done_reason === 'length') throw erroCom(`resposta cortada: aumente o limite de tokens (agora ${numPredict}; --max-tokens ou "Limite de tokens")`, 'CORTADA', tokens);
+      else if (thinking && !semFormato) throw erroCom('o modelo só pensou e não respondeu', 'SO_PENSOU', tokens);
+      else throw erroCom(thinking ? 'o modelo só pensou e não respondeu (também sem format)' : 'resposta vazia (sem message.content)', null, tokens);
+    }
+    return { ans, ...tokens, ...(origem ? { origem } : {}), raw };
   }
   return {
     name: 'ollama',
     model: name,
     pensar: think,
     livre: true,
+    maxTokens: numPredict,
+    timeoutMs: totalMs,
+    idleMs: idle,
     async choose(ctx) {
       const format = {
         type: 'object',
         properties: { escolha: { type: 'string', enum: ctx.ids }, motivo: { type: 'string' } },
         required: ['escolha'],
       };
-      const { ans, ...rest } = await chat(format, SYSTEM, userMessage(ctx));
+      const { ans, ...rest } = await chat(ctx, format, SYSTEM, userMessage(ctx), { campo: 'escolha', ids: ctx.ids });
       return {
-        id: typeof ans?.escolha === 'string' ? ans.escolha.trim().toLowerCase() : ans?.escolha,
-        motivo: ans?.motivo ?? null,
+        id: typeof ans?.escolha === 'string' ? semAcento(ans.escolha.trim()) : ans?.escolha,
+        motivo: typeof ans?.motivo === 'string' ? ans.motivo : null,
         ...rest,
       };
     },
     async chooseFree(ctx) {
-      const { ans, ...rest } = await chat(FORMAT_LIVRE, SYSTEM_LIVRE, userMessageLivre(ctx));
+      const evitar = [...(ctx.palavras_ja_tentadas || []), ...(ctx.tentativas_invalidas_nesta_rodada || []).map(t => t.palavra)];
+      const { ans, ...rest } = await chat(ctx, FORMAT_LIVRE, SYSTEM_LIVRE, userMessageLivre(ctx), { campo: 'palavra', evitar });
       return {
         word: typeof ans?.palavra === 'string' ? ans.palavra : null,
         motivo: typeof ans?.motivo === 'string' ? ans.motivo : null,
@@ -155,4 +285,4 @@ export function create({ model, baseUrl, pensar } = {}) {
   };
 }
 
-export { SYSTEM, userMessage, SYSTEM_LIVRE, userMessageLivre, FORMAT_LIVRE };
+export { SYSTEM, userMessage, SYSTEM_LIVRE, userMessageLivre, FORMAT_LIVRE, lerResposta };

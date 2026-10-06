@@ -5,12 +5,15 @@
 //   node arena/jogar.mjs --backend code|ollama|jev [--jogos 3] [--letras 4..9|extremo|invisivel]
 //     [--variante pt|br] [--tentativas 6] [--url URL] [--local]
 //     [--model qwen3.5:9b] [--opcoes 8] [--pensar] [--visivel] [--ritmo MS] [--saida arena/resultados]
-//     [--max-propostas 25]
+//     [--max-propostas 25] [--max-tokens 4096]
 //
 // --letras invisivel é o modo livre: o modelo inventa cada palavra (livre.mjs),
 // sem opções do código e sem sorteio; só o backend ollama joga. Se o modelo
 // não der uma palavra válida em --max-propostas propostas numa rodada, a
 // partida é abandonada (conta como derrota).
+// O backend ollama lê a resposta em streaming; enquanto o modelo pensa, uma
+// linha de estado mostra "pensando… 12 s · 1.830 chars" (no terminal ela se
+// atualiza no lugar; fora de um terminal, uma linha a cada 10 s).
 
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
@@ -19,7 +22,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadDict, suggest, describeOptions, describeState, lastTryOnly } from './solver.mjs';
-import { loadBackend, pick } from './backends/index.mjs';
+import { loadBackend, pick, cortaRaciocinio } from './backends/index.mjs';
 import * as Livre from './livre.mjs';
 
 const ARENA_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -42,6 +45,7 @@ const { values: a } = parseArgs({
     ritmo: { type: 'string' },
     saida: { type: 'string' },
     'max-propostas': { type: 'string' },
+    'max-tokens': { type: 'string' },
     ajuda: { type: 'boolean', short: 'h', default: false },
   },
 });
@@ -67,6 +71,8 @@ const cfg = {
   maxPropostas: a['max-propostas'] != null ? parseInt(a['max-propostas'], 10) : Livre.MAX_PROPOSTAS,
 };
 if (!(cfg.maxPropostas >= 1)) fail('--max-propostas deve ser um inteiro a partir de 1');
+const maxTokens = a['max-tokens'] != null ? parseInt(a['max-tokens'], 10) : undefined;
+if (maxTokens !== undefined && !(maxTokens >= 16)) fail('--max-tokens deve ser um inteiro a partir de 16');
 if (!extremo && !livre && ![4, 5, 6, 7, 8, 9].includes(cfg.len)) fail('--letras deve ser 4 a 9, extremo ou invisivel');
 const lenLabel = extremo ? 'Extremo (10 a 13 letras)' : livre ? 'invisível (livre): 4 a 9 letras, tamanho escondido' : `${cfg.len} letras`;
 if (!['pt', 'br'].includes(cfg.v)) fail('--variante deve ser pt ou br');
@@ -104,6 +110,39 @@ function serveLocal() {
   });
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
+
+// ---------- linha de estado durante o pedido ao modelo ----------
+// No terminal (TTY): uma linha só, reescrita com \r. Fora dele (arquivo,
+// pipe): uma linha a cada 10 s de pedido. clear() apaga a linha antes de
+// imprimir outra coisa.
+const status = (() => {
+  const tty = !!process.stdout.isTTY;
+  let shown = 0, bucket = 0;
+  const texto = (label, p) => {
+    const s = Math.floor(p.elapsedMs / 1000);
+    const fase = p.phase === 'respondendo' ? 'respondendo…' : p.phase === 'pensando' ? 'pensando…' : 'esperando o modelo…';
+    return `  ${label} ${fase} ${s} s` + (p.thinkingChars ? ` · ${fmt(p.thinkingChars)} chars` : '') +
+      (p.phase === 'respondendo' ? ` · resposta ${fmt(p.contentChars)} chars` : '') + (p.semFormato ? ' · sem format' : '');
+  };
+  return {
+    update(label, p) {
+      const t = texto(label, p);
+      if (tty) {
+        const cols = process.stdout.columns || 100;
+        const line = t.length >= cols ? t.slice(0, cols - 1) : t;
+        process.stdout.write('\r' + line.padEnd(shown) );
+        shown = line.length;
+      } else {
+        const b = Math.floor(p.elapsedMs / 10000);
+        if (b > bucket) { bucket = b; console.log(t); }
+      }
+    },
+    clear() {
+      if (tty && shown) process.stdout.write('\r' + ' '.repeat(shown) + '\r');
+      shown = 0; bucket = 0;
+    },
+  };
+})();
 
 // ---------- jogo ----------
 // Lê az-cur sem a palavra secreta (secret e key ficam na página).
@@ -226,8 +265,10 @@ async function playGame(browser, url, backend, n) {
       const options = describeOptions(sug, cfg.k);
       const ids = options.map(o => o.id);
       const ctx = { state: describeState(S, cands.length, D.keys.length, sug.mode), options, ids, codeChoice: ids[0] };
+      ctx.onProgress = p => status.update(`[jogo ${n} · jogada ${S.guesses.length + 1}]`, p);
 
       const r = await pick(backend, ctx);
+      status.clear();
       let word = r.id, invalidWord = false;
       let res = await submitWord(page, word, S.guesses.length);
       if (res === 'invalida') {
@@ -245,9 +286,12 @@ async function playGame(browser, url, backend, n) {
         igualAoCodigo: !r.invalid && r.id === ctx.codeChoice,
         ...(r.motivo ? { motivo: r.motivo } : {}),
         ...(r.thinkTokens ? { thinkTokens: r.thinkTokens } : {}),
+        ...(r.raciocinio ? { raciocinio: cortaRaciocinio(r.raciocinio) } : {}),
+        ...(r.avisos ? { avisos: r.avisos } : {}),
         ...(r.erro ? { erro: r.erro } : {}),
       });
       if (r.erro && process.env.ARENA_DEBUG) console.error(`  [jogada ${moves.length}] ${r.erro}`);
+      for (const w of r.avisos || []) console.log(`  [jogo ${n} · jogada ${moves.length}] aviso: ${w}`);
       S = await readState(page);
       if (ritmo) { await page.waitForTimeout(ritmo); pausas += ritmo; }
     }
@@ -315,7 +359,12 @@ async function playFreeGame(browser, url, backend, n) {
         if (res !== 'ok') { recusadasPeloJogo.push({ palavra: key, resultado: res }); await clearRow(page, Livre.MAX); }
         return res;
       };
-      const m = await Livre.freeMove(backend, S, { dicts, v: cfg.v, maxPropostas: cfg.maxPropostas, hooks: { submit } });
+      // linha de estado durante cada pedido; erros do backend (ex.: "o modelo
+      // só pensou e não respondeu") aparecem na hora, uma linha cada
+      const onProgress = (p, i) => status.update(`[jogo ${n} · rodada ${rodada} · pedido ${i + 1}]`, p);
+      const onProposal = p => { status.clear(); if (p.erro) console.log(`  [jogo ${n} · rodada ${rodada}] erro do backend: ${p.motivo_rejeicao}`); };
+      const m = await Livre.freeMove(backend, S, { dicts, v: cfg.v, maxPropostas: cfg.maxPropostas, hooks: { submit, onProgress, onProposal } });
+      status.clear();
       if (process.env.ARENA_DEBUG) for (const p of m.propostas) if (!p.valida) console.error(`  [rodada ${rodada}] ${p.palavra}: ${p.motivo_rejeicao}`);
       if (m.abandonado) {
         abandono = Livre.moveRecord(m, { rodada, ...(recusadasPeloJogo.length ? { recusadasPeloJogo } : {}) });
@@ -413,7 +462,7 @@ function printSummary(games, backend) {
 // ---------- principal ----------
 let stopping = false;
 async function main() {
-  const backend = await loadBackend(cfg.backend, { model: a.model, pensar: a.pensar });
+  const backend = await loadBackend(cfg.backend, { model: a.model, pensar: a.pensar, maxTokens });
   if (livre && !backend.livre) {
     let msg = 'este backend não joga no modo livre';
     try { await backend.chooseFree({}); } catch (e) { msg = e.message; }
@@ -448,6 +497,7 @@ async function main() {
   });
 
   console.log(`Arena Azulejo: ${cfg.jogos} jogo(s), ${lenLabel}, backend ${backend.name} (${backend.model}), ${url}`);
+  if (backend.name === 'ollama') console.log(`  ollama: streaming, ${backend.pensar ? 'pensar (think: true)' : 'sem pensar'}, num_predict ${backend.maxTokens}, tempo máx. por pedido ${Math.round(backend.timeoutMs / 1000)} s, aborta após ${Math.round(backend.idleMs / 1000)} s sem pedaço novo`);
   for (let i = 1; i <= cfg.jogos && !stopping; i++) {
     try {
       const g = await playGame(browser, url, backend, i);
@@ -464,14 +514,16 @@ async function main() {
         const res = ab ? `abandonada na ${ab.rodada}.ª rodada após ${apos} (${g.motivoAbandono})`
           : `${g.won ? 'vitória' : 'derrota'} em ${g.tentativas}/${g.tentativasMax ?? g.tries}`;
         console.log(`  jogo ${i} (invisível (livre)): ${res} (${secs(g.tempoTotalMs)}) ${seq}  [segredo: ${g.secret}, ${g.len} letras; ${rej} propostas recusadas]`);
-        const props = m => m.propostas.map(p => `${p.palavra ?? '∅'}${p.valida ? ' ✓' : ` ✗ (${p.motivo_rejeicao})`}`).join(', ');
-        const meta = m => `${fmt(m.latencyMs)} ms · tokens ${fmt(m.tokens.entrada)}/${fmt(m.tokens.saida)}${m.thinkTokens ? ` · raciocínio ~${m.thinkTokens} tokens` : ''}`;
+        const origem = p => (p.origem === 'raciocinio' ? ' [tirada do raciocínio]' : p.origem === 'sem-format' ? ' [sem format]' : '');
+        const props = m => m.propostas.map(p => `${p.palavra ?? '∅'}${origem(p)}${p.valida ? ' ✓' : ` ✗ (${p.motivo_rejeicao})`}`).join(', ');
+        const meta = m => `${fmt(m.latencyMs)} ms · tokens ${fmt(m.tokens.entrada)}/${fmt(m.tokens.saida)}${m.thinkTokens ? ` · raciocínio ~${m.thinkTokens} tokens` : ''}${m.errosBackend ? ` · ${m.errosBackend} ${m.errosBackend === 1 ? 'erro' : 'erros'} do backend` : ''}`;
         const rec = n => (n ? ` (${n} ${n === 1 ? 'proposta recusada' : 'propostas recusadas'})` : '');
         g.moves.forEach((m, j) => console.log(`     J${i}.${j + 1} ${m.palavra.toUpperCase()}${rec(m.invalid)} ${meta(m)} · propostas: ${props(m)}`));
         if (ab) console.log(`     J${i}.${ab.rodada} abandonou${rec(ab.invalid)} ${meta(ab)} · propostas: ${props(ab)}`);
       } else console.log(`  jogo ${i} (${g.len} letras): ${g.won ? 'vitória' : 'derrota'} em ${g.tentativas}/${g.tries} (${secs(g.tempoTotalMs)}) ${seq}  [segredo: ${g.secret}]`);
     } catch (e) {
       if (stopping) break;
+      status.clear();
       console.error(`  jogo ${i}: erro: ${e.message}`);
     }
   }

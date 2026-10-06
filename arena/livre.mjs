@@ -7,7 +7,7 @@
 // seguidas), a partida é abandonada. Funciona no Node (jogar.mjs) e no
 // navegador (index.html).
 import { norm, loadDict } from './solver.mjs';
-import { pickFree } from './backends/index.mjs';
+import { pickFree, cortaRaciocinio } from './backends/index.mjs';
 
 export const MIN = 4, MAX = 13;            // tamanho de cada tentativa
 export const LENS = Array.from({ length: MAX - MIN + 1 }, (_, i) => MIN + i);
@@ -98,11 +98,16 @@ export const motivoErros = (n, erro) => `o backend falhou em ${n} pedidos seguid
 // palavras recusadas, ou o backend falhar (rede, HTTP, JSON, resposta sem
 // palavra) maxPropostas vezes seguidas, a jogada volta com abandonado: true e
 // nada é digitado. Os erros do backend não contam como propostas.
+// Se o modelo só pensou e não respondeu (r.soPensou), conta um erro do backend
+// e o pedido seguinte vai uma vez sem format (ctx.semFormato, leitura
+// tolerante); depois volta ao normal.
 // S: az-cur sem len/secret/key. Ganchos (opcionais), usados pela página e pelo
-// harness: hooks.onAsk(ctx, i) antes de cada pedido; hooks.onProposal(p, r)
-// depois de cada resposta; hooks.submit(key, display, p) digita a palavra
-// aceita e devolve 'ok' ou o resultado do jogo (se o jogo recusar, a proposta
-// passa a recusada e o modelo é chamado de novo).
+// harness: hooks.onAsk(ctx, i) antes de cada pedido; hooks.onProgress(p, i)
+// durante o pedido (streaming: fase, caracteres de raciocínio, fim do
+// raciocínio); hooks.onProposal(p, r) depois de cada resposta;
+// hooks.submit(key, display, p) digita a palavra aceita e devolve 'ok' ou o
+// resultado do jogo (se o jogo recusar, a proposta passa a recusada e o
+// modelo é chamado de novo).
 export async function freeMove(backend, S, { dicts, v = S.v, hooks = {}, maxPropostas = MAX_PROPOSTAS } = {}) {
   const max = Math.max(1, Math.floor(Number(maxPropostas)) || MAX_PROPOSTAS);
   const tried = new Set(S.guesses.map(g => g.key));
@@ -110,19 +115,25 @@ export async function freeMove(backend, S, { dicts, v = S.v, hooks = {}, maxProp
   const propostas = [], invalidas = [], erros = [];
   let latencyMs = 0, tokensIn = 0, tokensOut = 0, thinkTokens = 0;
   let chosen = null, typed = null, motivo = null, palavras = 0, errosSeguidos = 0, motivoAbandono = null;
+  let semFormato = false, raciocinio = null;
   for (let i = 0; !chosen; i++) {
     if (palavras >= max) { motivoAbandono = motivoLimite(max); break; }
     if (errosSeguidos >= max) { motivoAbandono = motivoErros(max, erros.at(-1)); break; }
     const ctx = buildCtx(S, invalidas, { proposta: palavras + 1, maxPropostas: max });
+    if (semFormato) ctx.semFormato = true;
+    if (hooks.onProgress) ctx.onProgress = p => hooks.onProgress(p, i);
     hooks.onAsk?.(ctx, i);
     const r = await pickFree(backend, ctx);
     latencyMs += r.latencyMs; tokensIn += r.tokensIn; tokensOut += r.tokensOut; thinkTokens += r.thinkTokens;
+    if (r.raciocinio) raciocinio = r.raciocinio;
+    // depois de "só pensou" (com format), o próximo pedido vai uma vez sem format
+    semFormato = !!r.soPensou && !semFormato;
     let p;
     if (r.word == null) {
       errosSeguidos++;
       const erro = r.erro || 'resposta vazia';
       erros.push(erro);
-      p = { palavra: null, valida: false, erro: true, motivo_rejeicao: `sem palavra (${erro})` };
+      p = { palavra: null, valida: false, erro: true, motivo_rejeicao: `sem palavra (${erro}${semFormato ? '; pedindo de novo sem format' : ''})` };
       propostas.push(p);
       hooks.onProposal?.(p, r);
       continue;
@@ -132,6 +143,7 @@ export async function freeMove(backend, S, { dicts, v = S.v, hooks = {}, maxProp
     if (c.valida && recusadas.has(c.key)) c = { key: c.key, valida: false, motivo_rejeicao: 'já foi recusada nesta rodada' };
     p = { palavra: r.word, valida: c.valida, ...(c.valida ? {} : { motivo_rejeicao: c.motivo_rejeicao }) };
     if (r.motivo) p.motivo = r.motivo;
+    if (r.origem) p.origem = r.origem;                   // 'raciocinio' ou 'sem-format'
     propostas.push(p);
     hooks.onProposal?.(p, r);
     if (c.valida && hooks.submit) {
@@ -157,6 +169,7 @@ export async function freeMove(backend, S, { dicts, v = S.v, hooks = {}, maxProp
     errosBackend: erros.length,
     latencyMs, tokensIn, tokensOut, thinkTokens,
     motivo: chosen ? motivo : null,
+    raciocinio: cortaRaciocinio(raciocinio),           // do último pedido (o da palavra aceita), até 4000 caracteres
     erros,
   };
 }
@@ -171,6 +184,7 @@ export function moveRecord(m, extra = {}) {
     ...(m.abandonado ? { abandonado: true, motivoAbandono: m.motivoAbandono } : {}),
     tokens: { entrada: m.tokensIn, saida: m.tokensOut }, thinkTokens: m.thinkTokens,
     ...(m.motivo ? { motivo: m.motivo } : {}),
+    ...(m.raciocinio ? { raciocinio: m.raciocinio } : {}),
     ...(m.erros.length ? { erro: m.erros.join(' | ') } : {}),
     ...extra,
   };

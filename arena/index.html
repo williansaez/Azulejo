@@ -126,6 +126,15 @@ tr.pick td.w{color:var(--cobalt)}
 .propcount{float:right;font:600 12px var(--body);color:var(--muted);font-variant-numeric:tabular-nums}
 .props li.fb{border-color:var(--near);background:transparent}
 .props li.wait{border-color:var(--line);background:transparent;color:var(--muted)}
+/* raciocínio ao vivo (streaming do Ollama) e "ver raciocínio" */
+.thinking{display:flex;flex-direction:column;gap:4px}
+.thinkhead{font:600 13px var(--body);color:var(--cobalt);font-variant-numeric:tabular-nums}
+.thinktail,details.rac pre{margin:0;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted);background:var(--ground);border:1px solid var(--line);border-radius:6px;padding:6px 8px;white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto}
+.thinktail{max-height:calc(1.45em * 6 + 14px)}
+details.rac{margin-top:3px;font-size:12px}
+details.rac summary{cursor:pointer;color:var(--cobalt);font-weight:600;width:max-content;max-width:100%}
+details.rac pre{max-height:calc(1.45em * 16 + 14px);margin-top:4px}
+.log details.rac{margin:2px 0 0 14px}
 @media (max-width:900px){ .duel{grid-template-columns:minmax(0,1fr);grid-auto-flow:row;grid-template-rows:none} .side{grid-row:auto;grid-template-rows:none} }
 @media (max-width:420px){ body{padding:16px 12px} .card{padding:12px} .frame{min-height:480px} }
 </style>
@@ -192,6 +201,8 @@ tr.pick td.w{color:var(--cobalt)}
         <label data-for="ollama"><span class="lbl">URL do Ollama</span><input data-k="ollamaUrl" placeholder="/ollama ou http://localhost:11434"></label>
         <label data-for="ollama"><span class="lbl">Modelo</span><input data-k="ollamaModel" placeholder="qwen3.5:9b"></label>
         <label data-for="ollama" class="chk" title="Manda think: true ao Ollama (modelos com raciocínio)"><input type="checkbox" data-k="ollamaThink"><span>Pensar</span></label>
+        <label data-for="ollama" title="Teto de cada pedido ao modelo; enquanto o modelo manda pedaços não há outro limite (mas 180 s sem nada abortam). Padrão: 900 s com Pensar, 120 s sem."><span class="lbl">Tempo máx. por proposta (s)</span><input data-k="ollamaTimeout" type="number" min="10" step="10"></label>
+        <label data-for="ollama" title="options.num_predict: tokens que o modelo pode gerar por pedido (raciocínio + resposta). Se a resposta vier cortada, aumente."><span class="lbl">Limite de tokens</span><input data-k="ollamaMaxTokens" type="number" min="16" step="256"></label>
         <label data-for="jev"><span class="lbl">URL da TypeSafe</span><input data-k="jevUrl" placeholder="/typesafe ou https://api.typesafe.ai"></label>
         <label data-for="jev"><span class="lbl">Chave</span><input data-k="jevKey" type="password" placeholder="opcional com /typesafe"></label>
         <label data-for="jev"><span class="lbl">Modelo</span><input data-k="jevModel" placeholder="jev-latest"></label>
@@ -210,6 +221,7 @@ tr.pick td.w{color:var(--cobalt)}
         </div>
       </div>
       <div class="state" data-k="state">O cronômetro começa quando o jogo e o dicionário estão prontos e para nas pausas de ritmo e de digitação.</div>
+      <div class="thinking" data-k="thinkLive" hidden aria-live="off"><div class="thinkhead" data-k="thinkHead"></div><pre class="thinktail" data-k="thinkTail" hidden></pre></div>
       <div class="choice" data-k="choice" hidden></div>
       <div class="freeview" data-k="freeView" hidden>
         <div><span class="lbl">O que o modelo vê: letras</span><div class="chips" data-k="fvLetters"><span class="empty">Nenhuma letra conhecida ainda.</span></div></div>
@@ -247,7 +259,7 @@ addEventListener('error', e => {
 </script>
 <script type="module">
 import { loadDict, suggest, describeOptions, describeState, lastTryOnly } from './solver.mjs';
-import { loadBackend, pick } from './backends/index.mjs';
+import { loadBackend, pick, cortaRaciocinio } from './backends/index.mjs';
 import * as Livre from './livre.mjs';
 
 const $ = id => document.getElementById(id);
@@ -269,6 +281,7 @@ const ROOT_URL = new URL('../', location.href).href;
 const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
 const SIDE_DEFAULTS = {
   ollamaUrl: LOCAL ? '/ollama' : 'http://localhost:11434', ollamaModel: 'qwen3.5:9b', ollamaThink: false,
+  ollamaTimeout: '120', ollamaMaxTokens: '4096',
   jevUrl: LOCAL ? '/typesafe' : 'https://api.typesafe.ai', jevKey: '', jevModel: 'jev-latest',
 };
 const DEFAULTS = {
@@ -277,7 +290,7 @@ const DEFAULTS = {
 };
 const HELP = {
   code: 'Linha de base sem rede: escolhe sempre a primeira opção do código (maior informação esperada; com milhares de palavras possíveis, maior pontuação heurística).',
-  ollama: 'URL "/ollama" usa o proxy do node arena/servir.mjs (sem CORS); "/ollama2" vai para um segundo Ollama (OLLAMA_URL2). Uma URL direta exige iniciar o Ollama com OLLAMA_ORIGINS igual à origem desta página (ou "*"). "Pensar" manda think: true (modelos com raciocínio).',
+  ollama: 'URL "/ollama" usa o proxy do node arena/servir.mjs (sem CORS); "/ollama2" vai para um segundo Ollama (OLLAMA_URL2). Uma URL direta exige iniciar o Ollama com OLLAMA_ORIGINS igual à origem desta página (ou "*"). "Pensar" manda think: true (modelos com raciocínio): a resposta chega em streaming e o painel mostra o raciocínio ao vivo; um modelo pensando pode levar minutos por proposta.',
   jev: 'URL "/typesafe" usa o proxy do node arena/servir.mjs, que acrescenta TYPESAFE_API_KEY. A chave digitada aqui fica guardada só neste navegador.',
 };
 const cfgEls = [...document.querySelectorAll('[data-c]')];
@@ -364,6 +377,8 @@ function hintFor(backend, erro) {
 }
 
 let stopping = false, running = false;
+// "Parar" também corta o pedido em curso ao modelo (um modelo pensando pode levar minutos)
+let stopCtl = new AbortController();
 
 // ---------- um lado do confronto ----------
 class Side {
@@ -374,6 +389,12 @@ class Side {
     this.clock = makeClock(this.q('clock'));
     const s = { ...DEFAULTS[name], ...(saved[name] || {}) };
     for (const k of Object.keys(DEFAULTS[name])) { const el = this.q(k); if (el.type === 'checkbox') el.checked = !!s[k]; else el.value = s[k]; }
+    // Tempo máx. por proposta: padrão 900 s com Pensar e 120 s sem; ao ligar ou
+    // desligar Pensar, troca o valor se ainda for o padrão do outro estado
+    const th = this.q('ollamaThink'), to = this.q('ollamaTimeout');
+    const toDefault = () => (th.checked ? '900' : '120');
+    if (saved[name]?.ollamaTimeout == null) to.value = toDefault();
+    th.addEventListener('change', () => { const v = to.value.trim(); if (!v || v === (th.checked ? '120' : '900')) to.value = toDefault(); });
     this.q('backend').addEventListener('change', () => this.syncFields());
     this.syncFields();
   }
@@ -401,7 +422,8 @@ class Side {
   readCfg() { return Object.fromEntries(Object.keys(DEFAULTS[this.name]).map(k => { const el = this.q(k); return [k, el.type === 'checkbox' ? el.checked : el.value.trim()]; })); }
   setDisabled(on) { this.root.querySelectorAll('.form input,.form select').forEach(el => { el.disabled = on; }); }
   async makeBackend(c) {
-    this.backend = await loadBackend(c.backend, c.backend === 'ollama' ? { baseUrl: c.ollamaUrl, model: c.ollamaModel || undefined, pensar: !!c.ollamaThink }
+    this.backend = await loadBackend(c.backend, c.backend === 'ollama' ? { baseUrl: c.ollamaUrl, model: c.ollamaModel || undefined, pensar: !!c.ollamaThink,
+        timeoutMs: (Number(c.ollamaTimeout) || (c.ollamaThink ? 900 : 120)) * 1000, maxTokens: Number(c.ollamaMaxTokens) || undefined }
       : c.backend === 'jev' ? { baseUrl: c.jevUrl, apiKey: c.jevKey, model: c.jevModel || undefined } : {});
   }
   get doc() { return this.frame.contentDocument; }
@@ -442,6 +464,31 @@ class Side {
   }
   facts(f) { for (const [k, v] of Object.entries(f)) this.q(k).textContent = v; }
   state(t) { this.q('state').textContent = t; }
+  // Pedido em curso (streaming): "Pensando… 12 s · 1.830 caracteres" e o fim
+  // do raciocínio numa caixa que rola sozinha. Devolve o texto do cabeçalho.
+  progress(p) {
+    const s = Math.floor(p.elapsedMs / 1000);
+    const head = (p.phase === 'respondendo' ? `Respondendo… ${s} s${p.thinkingChars ? ` · ${fmt(p.thinkingChars)} caracteres de raciocínio` : ''}`
+      : p.phase === 'pensando' ? `Pensando… ${s} s · ${fmt(p.thinkingChars)} caracteres`
+      : `Esperando o modelo… ${s} s`) + (p.semFormato ? ' · pedido de novo sem format' : '');
+    this.q('thinkLive').hidden = false;
+    this.q('thinkHead').textContent = head;
+    const tail = this.q('thinkTail'), txt = p.thinkingTail ? (p.thinkingChars > p.thinkingTail.length ? '…' : '') + p.thinkingTail : '';
+    tail.hidden = !txt;
+    if (tail.textContent !== txt) { tail.textContent = txt; tail.scrollTop = tail.scrollHeight; }
+    return head;
+  }
+  endProgress() { this.q('thinkLive').hidden = true; this.q('thinkHead').textContent = ''; this.q('thinkTail').textContent = ''; }
+  // <details> "ver raciocínio" com o texto completo (até 4000 caracteres)
+  racDetails(text, label = 'ver raciocínio') {
+    const t = cortaRaciocinio(text);
+    if (!t) return null;
+    const d = document.createElement('details'); d.className = 'rac';
+    const sm = document.createElement('summary'); sm.textContent = `${label} (${fmt(text.length)} caracteres)`;
+    const pre = document.createElement('pre'); pre.textContent = t;
+    d.append(sm, pre);
+    return d;
+  }
   badge(t, cls = '') { const b = this.q('badge'); b.hidden = !t; b.textContent = t || ''; b.className = 'badge ' + cls; }
   renderOptions(options, chosen, code) {
     this.q('opts').innerHTML = options.map(o => `<tr class="${o.id === chosen ? 'pick' : ''}">
@@ -530,24 +577,39 @@ class Side {
       this.q('fvProps').innerHTML = '';
       this.q('fvCount').textContent = '';
       this.q('choice').hidden = true;
-      let waitLi = null;
+      let waitLi = null, waitK = 0, lastRac = null;
       const recusadasPeloJogo = [];
       const hooks = {
         onAsk: (ctx, i) => {
+          if (stopping) throw new Error('interrompido');
+          ctx.signal = stopCtl.signal;
           if (i === 0) this.renderModelView(ctx);
           const k = ctx.proposta_nesta_rodada;
           this.q('fvCount').textContent = `proposta ${k} de ${maxP}`;
-          this.state(`${BACKEND_LABEL[backend.name]} inventando uma palavra (proposta ${k} de ${maxP})…`);
+          this.state(`${BACKEND_LABEL[backend.name]} inventando uma palavra (proposta ${k} de ${maxP})${ctx.semFormato ? ', pedido de novo sem format' : ''}…`);
           waitLi = this.propLine(`Proposta ${k} de ${maxP}: pedindo ao modelo…`, 'wait');
+          waitK = k;
+        },
+        // streaming: tempo, caracteres e o fim do raciocínio, ao vivo
+        onProgress: p => {
+          const head = this.progress(p);
+          if (waitLi) waitLi.textContent = `Proposta ${waitK} de ${maxP}: ${head}`;
         },
         onProposal: (p, r) => {
           waitLi?.remove(); waitLi = null;
+          this.endProgress();
           const meta = ` · ${fmt(r.latencyMs)} ms · tokens ${fmt(r.tokensIn)}/${fmt(r.tokensOut)}${r.thinkTokens ? ` · pensamento ~${fmt(r.thinkTokens)}` : ''}`;
-          if (p.valida) this.propLine(`<b>${nome(p)}</b> aceita${meta}${p.motivo ? ` · motivo: ${esc(p.motivo)}` : ''}`, 'ok');
+          const origem = p.origem === 'raciocinio' ? ' <span class="tag" title="o conteúdo veio vazio; a palavra foi tirada do raciocínio">do raciocínio</span>'
+            : p.origem === 'sem-format' ? ' <span class="tag" title="pedido de novo sem format, depois de o modelo só pensar">sem format</span>' : '';
+          let li;
+          if (p.valida) li = this.propLine(`<b>${nome(p)}</b> aceita${origem}${meta}${p.motivo ? ` · motivo: ${esc(p.motivo)}` : ''}`, 'ok');
+          else if (p.erro) li = this.propLine(`Erro do backend: ${esc(p.motivo_rejeicao)}${meta}`, 'bad');
           else {
-            if (!p.erro) { rejeitadasJogo++; this.facts({ fCands: fmt(rejeitadasJogo) }); }
-            this.propLine(`<b>${nome(p)}</b> recusada: ${esc(p.motivo_rejeicao)}${meta}${p.motivo ? ` · motivo: ${esc(p.motivo)}` : ''}`, 'bad');
+            rejeitadasJogo++; this.facts({ fCands: fmt(rejeitadasJogo) });
+            li = this.propLine(`<b>${nome(p)}</b> recusada: ${esc(p.motivo_rejeicao)}${origem}${meta}${p.motivo ? ` · motivo: ${esc(p.motivo)}` : ''}`, 'bad');
           }
+          const d = this.racDetails(r.raciocinio); if (d) li.appendChild(d);
+          if (p.valida) lastRac = r.raciocinio;
         },
         // digita a palavra aceita; se o jogo a recusar (não deveria: mesmos
         // dicionários), apaga a linha e o modelo recebe a recusa e propõe outra
@@ -565,7 +627,8 @@ class Side {
           return res;
         },
       };
-      const m = await Livre.freeMove(backend, S, { dicts, v: cfg.v, hooks, maxPropostas: maxP });
+      let m;
+      try { m = await Livre.freeMove(backend, S, { dicts, v: cfg.v, hooks, maxPropostas: maxP }); } finally { this.endProgress(); }
       this.facts({ fLat: `${fmt(m.latencyMs)} ms` });
       for (const e of m.erros) { const hint = hintFor(backend.name, e); if (hint) { this.log(`   ${hint}`, 'hint'); break; } }
       if (m.abandonado) {
@@ -579,13 +642,16 @@ class Side {
       }
       this.q('choice').innerHTML = `Jogada: <b>${esc(m.display.toUpperCase())}</b> · ${fmt(m.latencyMs)} ms` +
         (m.invalid ? ` · <span class="tag bad">${m.invalid} ${m.invalid === 1 ? 'proposta recusada' : 'propostas recusadas'}</span>` : '') +
+        (m.errosBackend ? ` · <span class="tag bad">${m.errosBackend} ${m.errosBackend === 1 ? 'erro' : 'erros'} do backend</span>` : '') +
         (m.motivo ? ` · motivo: ${esc(m.motivo)}` : '');
+      { const d = this.racDetails(lastRac); if (d) this.q('choice').appendChild(d); }
       moves.push(Livre.moveRecord(m, recusadasPeloJogo.length ? { recusadasPeloJogo } : {}));
       S = this.readStateFree();
       const g = S.guesses[S.guesses.length - 1];
       this.log([`J${n}.${round} ${(g.word || m.word).toUpperCase()}${recusadas(m.invalid)} `, minis(g.res),
-        ` ${fmt(m.latencyMs)} ms · tokens ${fmt(m.tokensIn)}/${fmt(m.tokensOut)}${m.thinkTokens ? ` · pensamento ~${fmt(m.thinkTokens)}` : ''}${m.motivo ? ` · ${m.motivo}` : ''}`]);
-      for (const p of m.propostas) if (!p.valida) this.log(`   recusada: ${p.palavra == null ? '(sem palavra)' : String(p.palavra).toUpperCase()} (${p.motivo_rejeicao})`, 'err');
+        ` ${fmt(m.latencyMs)} ms · tokens ${fmt(m.tokensIn)}/${fmt(m.tokensOut)}${m.thinkTokens ? ` · pensamento ~${fmt(m.thinkTokens)}` : ''}${m.motivo ? ` · ${m.motivo}` : ''}`,
+        ...[this.racDetails(m.raciocinio)].filter(Boolean)]);
+      for (const p of m.propostas) if (!p.valida) this.log(p.erro ? `   erro do backend: ${p.motivo_rejeicao}` : `   recusada: ${p.palavra == null ? '(sem palavra)' : String(p.palavra).toUpperCase()} (${p.motivo_rejeicao})`, 'err');
       if (cfg.ritmo) { this.state('Pausa (ritmo)…'); await this.clock.pause(cfg.ritmo); }
     }
     const tempoTotalMs = this.clock.stop();
@@ -649,8 +715,11 @@ class Side {
       this.renderOptions(options, null, ctx.codeChoice);
       this.q('choice').hidden = true;
       this.state(`${BACKEND_LABEL[backend.name]} escolhendo entre ${ids.length} opções…`);
+      ctx.onProgress = p => this.progress(p);
+      ctx.signal = stopCtl.signal;
 
-      const r = await pick(backend, ctx);
+      let r;
+      try { r = await pick(backend, ctx); } finally { this.endProgress(); }
       const motivo = r.motivo ?? (backend.name === 'code' ? (sug.mode === 'heuristica' ? 'maior pontuação heurística' : 'maior informação esperada') : null);
       const chosenWord = options.find(o => o.id === r.id)?.word ?? String(r.id).toUpperCase();
       this.renderOptions(options, r.id, ctx.codeChoice);
@@ -658,6 +727,7 @@ class Side {
       this.q('choice').hidden = false;
       this.q('choice').innerHTML = `Escolha: <b>${esc(chosenWord)}</b> · ${fmt(r.latencyMs)} ms` +
         (motivo ? ` · motivo: ${esc(motivo)}` : '') + (r.invalid ? ' · <span class="tag bad">inválida, usando a do código</span>' : '');
+      { const d = this.racDetails(r.raciocinio); if (d) this.q('choice').appendChild(d); }
       this.state(`Digitando ${chosenWord}…`);
 
       let word = r.id, invalidWord = false;
@@ -676,6 +746,9 @@ class Side {
         candidatesBefore: cands.length, modoSolver: sug.mode, opcoes: ids.length,
         igualAoCodigo: !r.invalid && r.id === ctx.codeChoice,
         ...(r.motivo ? { motivo: r.motivo } : {}),
+        ...(r.thinkTokens ? { thinkTokens: r.thinkTokens } : {}),
+        ...(r.raciocinio ? { raciocinio: cortaRaciocinio(r.raciocinio) } : {}),
+        ...(r.avisos ? { avisos: r.avisos } : {}),
         ...(r.erro ? { erro: r.erro } : {}),
       };
       moves.push(m);
@@ -683,7 +756,8 @@ class Side {
       const g = S.guesses[S.guesses.length - 1];
       this.log([`J${n}.${round} ${(g.word || word).toUpperCase()} `, minis(g.res), ` ${fmt(r.latencyMs)} ms` +
         ` · tokens ${fmt(r.tokensIn)}/${fmt(r.tokensOut)} · ${m.igualAoCodigo ? 'igual ao código' : m.invalid ? 'inválida' : 'diferente do código'}` +
-        ` · ${fmt(cands.length)} ${cands.length === 1 ? 'possível' : 'possíveis'}${motivo ? ` · ${motivo}` : ''}`], m.invalid ? 'err' : '');
+        ` · ${fmt(cands.length)} ${cands.length === 1 ? 'possível' : 'possíveis'}${motivo ? ` · ${motivo}` : ''}`, ...[this.racDetails(r.raciocinio)].filter(Boolean)], m.invalid ? 'err' : '');
+      for (const w of r.avisos || []) this.log(`   erro do backend: ${w}`, 'err');
       if (r.erro) this.log(`   erro: ${r.erro}`, 'err');
       if (invalidWord) this.log(`   ${String(r.id).toUpperCase()} não está no dicionário do jogo; digitada a do código.`, 'err');
       const hint = hintFor(backend.name, r.erro); if (hint) this.log(`   ${hint}`, 'hint');
@@ -811,11 +885,12 @@ function loadBoth(cfg, seed) {
 }
 const newSeed = i => (Date.now() ^ Math.imul(i + 1, 0x9E3779B1)) >>> 0;
 
-$('stop').addEventListener('click', () => { stopping = true; $('stop').disabled = true; $('runState').textContent = 'Parando depois da jogada em curso…'; });
+$('stop').addEventListener('click', () => { stopping = true; stopCtl.abort(); $('stop').disabled = true; $('runState').textContent = 'Parando (o pedido em curso ao modelo é cancelado)…'; });
 $('start').addEventListener('click', async () => {
   if (!gameHtml) return;
   const cfg = readCfg();
   stopping = false;
+  stopCtl = new AbortController();
   $('bootError').hidden = true;
   setRunning(true, 'Jogando…');
   try {

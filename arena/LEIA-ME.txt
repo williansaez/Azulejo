@@ -30,7 +30,7 @@ backends/index.mjs   contrato comum: pick(backend, contexto) e, no modo livre,
                      navegador (create(opts) aceita baseUrl, apiKey, model e
                      pensar; o que faltar vem das variáveis de ambiente)
 backends/code.mjs    linha de base: escolhe sempre a melhor opção do código
-backends/ollama.mjs  modelo local via Ollama (/api/chat)
+backends/ollama.mjs  modelo local via Ollama (/api/chat, resposta em streaming)
 backends/jev.mjs     TypeSafe "System One" (o "Jev" do jev-tetris)
 test/mock-ollama.mjs servidor falso de /api/chat, para testes sem modelo
 test/mock-jev.mjs    servidor falso de /v1/systemone, para testes sem chave
@@ -93,7 +93,10 @@ Opções:
   --opcoes K                  quantas opções o modelo vê por jogada (padrão 8)
   --pensar                    ollama: manda think: true (modelos com raciocínio)
                               e mede os tokens de raciocínio; por padrão
-                              think: false
+                              think: false. Ver PENSAR (RACIOCÍNIO) E STREAMING
+  --max-tokens N              ollama: options.num_predict, tokens que o modelo
+                              pode gerar por pedido, raciocínio + resposta
+                              (padrão 4096; ARENA_MAX_TOKENS)
   --visivel                   mostra o navegador (por padrão roda sem janela)
   --ritmo MS                  pausa em ms depois de cada jogada e no fim do jogo,
                               para dar tempo de ver; não conta no tempo medido
@@ -130,6 +133,22 @@ Testes com servidores falsos (provam o caminho de pedido e resposta):
   MOCK_MODO=misto erra a primeira proposta de cada rodada e acerta a
   segunda. Com think: true o mock devolve também message.thinking (teste do
   --pensar). O mock não sabe o segredo: só acerta por acaso.
+  Streaming: com stream: true (o que o backend manda) o mock responde em
+  NDJSON: com think, 8 pedaços de raciocínio a cada ~150 ms, a resposta em
+  pedaços e o pedaço final (done: true, done_reason, prompt_eval_count,
+  eval_count, eval_duration). MOCK_STREAM=0 responde um JSON só (testa o
+  caminho sem streaming). Modos do raciocínio:
+    MOCK_MODO=sopensa  pensa e devolve conteúdo VAZIO (done_reason "stop")
+                       sempre que o pedido tem format; o novo pedido sem
+                       format recebe a resposta em texto (JSON num bloco
+                       ```json): testa "o modelo só pensou e não respondeu"
+    MOCK_MODO=lento    5 s de raciocínio por pedido (MOCK_LENTO_MS muda o
+                       tempo): para ver a linha de estado e o painel ao vivo
+    MOCK_MODO=cortada  pensa e devolve conteúdo vazio com done_reason
+                       "length": testa "resposta cortada"
+  MOCK_LOG=1 mostra, por pedido, stream, think, format e num_predict.
+  Ex.: MOCK_MODO=sopensa node arena/test/mock-ollama.mjs 11437 &
+       OLLAMA_URL=http://127.0.0.1:11437 node arena/jogar.mjs --backend ollama --letras invisivel --pensar --jogos 1 --local
 
 
 ASSISTIR PELO NAVEGADOR
@@ -138,7 +157,8 @@ A página arena/index.html mostra um duelo, como o jev-tetris: dois agentes
 jogam ao mesmo tempo, lado a lado, com a MESMA palavra secreta em cada jogo.
 Cada lado tem o seu backend (Código, Ollama ou Jev; por padrão Jev à
 esquerda e Ollama qwen3.5:9b à direita; no Ollama, "Pensar" manda
-think: true); letras (4 a 9, Extremo ou Invisível (modo livre)), variante, dificuldade,
+think: true, "Tempo máx. por proposta (s)" é o teto de cada pedido, 900 com
+Pensar e 120 sem, e "Limite de tokens" é o num_predict, 4096); letras (4 a 9, Extremo ou Invisível (modo livre)), variante, dificuldade,
 número de jogos, ritmo e opções por jogada valem para os dois. Cada lado
 mostra o jogo, um cronômetro "tempo desde o start" (começa quando o jogo
 começou e o dicionário daquele tamanho está carregado, e para durante as
@@ -202,7 +222,13 @@ OLLAMA_URL          base do Ollama (padrão http://localhost:11434)
 OLLAMA_URL2         servir.mjs: destino de /ollama2 (padrão OLLAMA_URL)
 TYPESAFE_URL        base da API TypeSafe (padrão https://api.typesafe.ai)
 TYPESAFE_API_KEY    chave da TypeSafe (Authorization: Bearer ...)
-ARENA_TIMEOUT_MS    tempo limite de cada chamada ao modelo (padrão 120000)
+ARENA_TIMEOUT_MS    teto de cada chamada ao modelo. Ollama: padrão 900000
+                    (15 min) com --pensar e 120000 sem; Jev: 120000. No
+                    Ollama o pedido é em streaming e este é só o teto: não
+                    há outro limite enquanto chegam pedaços
+ARENA_IDLE_MS       Ollama: aborta o pedido se ficar este tempo sem receber
+                    nenhum pedaço (padrão 180000; inclui carregar o modelo)
+ARENA_MAX_TOKENS    Ollama: options.num_predict (padrão 4096; --max-tokens)
 PORT                porta do servir.mjs (padrão 8080)
 ARENA_DEBUG=1       mostra no terminal o erro de cada jogada inválida
 PW_CHROMIUM         caminho do executável do Chromium
@@ -275,7 +301,9 @@ Por jogada (moves):
   word, latencyMs (tempo da chamada ao backend), invalid, tokens
   {entrada, saida}, candidatesBefore (palavras possíveis antes da jogada),
   modoSolver (entropia ou heuristica), opcoes, igualAoCodigo (o modelo escolheu o mesmo que o código?), motivo e
-  erro quando houver.
+  erro quando houver; com --pensar também thinkTokens e raciocinio (até
+  4000 caracteres) e, se o modelo só pensou e foi preciso pedir de novo
+  sem format, avisos.
 
 Resposta inválida: erro de rede ou HTTP, JSON ilegível, escolha fora da lista
 de ids, ou palavra recusada pelo jogo. Em todos os casos a jogada usa a
@@ -342,8 +370,9 @@ rodada, a lista das recusadas, uma por linha ("- QZXWV: não está no
 dicionário"), seguida de "Proponha uma palavra diferente de todas as
 recusadas." e "Esta é a proposta k de no máximo N nesta rodada."; e
 format = JSON Schema
-{palavra: string 4..16, motivo: string}. Com --pensar (ou "Pensar" na
-página) vai think: true; thinkTokens é uma aproximação: o /api/chat não
+{palavra: string 4..16, motivo: string}, stream: true e
+options.num_predict. Com --pensar (ou "Pensar" na
+página) vai think: true (ver PENSAR (RACIOCÍNIO) E STREAMING); thinkTokens é uma aproximação: o /api/chat não
 separa os tokens de raciocínio, então usa-se eval_count vezes a fração de
 caracteres de message.thinking (se a API trouxer um campo próprio, ele é
 usado).
@@ -384,8 +413,9 @@ abandono (o agente já não digita nada).
 Métricas, por jogada (moves): word (o que foi digitado), palavra (forma
 acentuada do dicionário), invalid (quantas propostas foram recusadas nesta
 jogada), propostas [{palavra, valida, motivo_rejeicao?, motivo?, erro?}],
-errosBackend (se houve), thinkTokens, motivo, tokens {entrada, saida} e
-latencyMs (somados sobre todas as propostas da jogada). Por jogo: modo
+errosBackend (se houve), thinkTokens, motivo, raciocinio (com --pensar,
+até 4000 caracteres), tokens {entrada, saida} e latencyMs (somados sobre
+todas as propostas da jogada). Por jogo: modo
 "invisivel", livre: true, pensar (se ligado), len e secret (lidos só no fim
 ou depois do abandono), tentativasMax (o Invisível dá o dobro das tentativas
 da dificuldade; tries guarda a dificuldade) e, se houve abandono,
@@ -417,6 +447,71 @@ proposta recusada e "Igual ao código" não se aplica (-).
 Exemplos:
   node arena/jogar.mjs --backend ollama --letras invisivel --jogos 5 --local
   node arena/jogar.mjs --backend ollama --model qwen3.5:9b --letras invisivel --pensar --jogos 3 --local
+
+
+PENSAR (RACIOCÍNIO) E STREAMING
+-------------------------------
+Modelos com raciocínio (ex.: qwen3.5:9b com think: true) podem pensar por
+minutos antes de responder. Por isso o backend ollama pede SEMPRE em
+streaming (stream: true), também sem --pensar:
+- lê os pedaços NDJSON do /api/chat (fetch + ReadableStream, no Node 20 e
+  no navegador), junta message.thinking e message.content e guarda os
+  tokens do último pedaço (done: true: prompt_eval_count, eval_count,
+  eval_duration). Se o servidor responder um JSON só (sem streaming),
+  funciona igual;
+- tempo: não há limite total enquanto chegam pedaços. Aborta se ficar
+  ARENA_IDLE_MS (padrão 180 s) sem receber nada, ou no teto
+  ARENA_TIMEOUT_MS (padrão 15 min com --pensar, 2 min sem; na página,
+  "Tempo máx. por proposta (s)" de cada lado). Um pedido abortado conta
+  como erro do backend (o raciocínio que já chegou fica no registro);
+- tokens: manda options.num_predict (padrão 4096; --max-tokens, ou "Limite
+  de tokens" na página), para o raciocínio não cortar a resposta. Se o
+  pedido acaba com done_reason "length" e sem resposta, o erro é "resposta
+  cortada: aumente o limite de tokens".
+Conteúdo vazio. Com think: true e format (JSON Schema), algumas versões do
+Ollama devolvem o raciocínio cheio e message.content vazio. Aí o backend:
+1. procura a resposta no próprio raciocínio: um JSON {"palavra": …} /
+   {"escolha": …}, ou (Invisível) a última palavra em MAIÚSCULAS de 4 a 13
+   letras que ainda não foi tentada nem recusada, ou (primeiro o código) a
+   última menção de um dos ids. Se achar, a proposta segue normalmente,
+   marcada com origem "raciocinio" ("do raciocínio" na página);
+2. se não achar, conta UM erro do backend ("o modelo só pensou e não
+   respondeu") e pede de novo uma vez SEM format, lendo a resposta com
+   tolerância ({…} no texto; senão, a última palavra de 4 a 13 letras, ou
+   um dos ids). Essa proposta fica com origem "sem-format". Depois volta ao
+   normal (com format).
+Esses casos são erros do backend, não propostas recusadas: não entram em
+"Propostas rejeitadas" e têm o seu próprio limite (maxPropostas erros
+seguidos abandonam a partida). No primeiro o código, quando o segundo
+pedido dá certo a jogada é válida e o erro fica em avisos.
+Ver o raciocínio:
+- linha de comando: durante cada pedido, uma linha de estado
+  "[jogo 1 · rodada 2 · pedido 1] pensando… 12 s · 1.830 chars" (depois
+  "respondendo…"). Num terminal ela se atualiza no lugar (\r); fora dele
+  (arquivo, pipe) sai uma linha a cada 10 s de pedido. Os erros do backend
+  aparecem na hora, uma linha cada. As linhas finais não mudam;
+- página: enquanto uma proposta está em curso, o painel do lado mostra
+  "Pensando… 12 s · 1.830 caracteres" e uma caixa (6 linhas, rola sozinha)
+  com o fim do raciocínio, ao vivo; depois "Respondendo…". Cada proposta, a
+  jogada e o registro ganham "ver raciocínio" (um <details> com o texto,
+  até 4000 caracteres). "Parar" corta o pedido em curso;
+- registro (.jsonl e "Baixar JSONL"): cada jogada tem raciocinio (o
+  raciocínio do pedido que deu a palavra, até 4000 caracteres, ficando o
+  fim) e cada proposta pode ter origem ("raciocinio" ou "sem-format").
+O servir.mjs repassa a resposta do Ollama sem juntar (manda os cabeçalhos
+na hora e cada pedaço assim que chega; não reescreve Content-Length) e,
+se a página desistir do pedido, cancela o pedido ao Ollama.
+Se "Pensar" parece não fazer nada:
+- veja se o modelo está carregado: ollama ps (o primeiro pedido pode levar
+  um tempo a carregar o modelo; o painel mostra "Esperando o modelo… N s");
+- confira que o modelo aceita raciocínio (qwen3.5 aceita; um modelo sem
+  raciocínio responde HTTP 400 "does not support thinking", que aparece no
+  registro);
+- use Ollama 0.9 ou mais novo (ollama -v): o campo think e
+  message.thinking vieram nessa versão;
+- se aparecer "resposta cortada", aumente --max-tokens / "Limite de
+  tokens"; se aparecer "tempo máximo do pedido esgotado", aumente
+  ARENA_TIMEOUT_MS / "Tempo máx. por proposta".
 
 
 AVISO SOBRE A TYPESAFE
