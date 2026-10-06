@@ -223,7 +223,7 @@ button:focus-visible{outline:2px solid var(--cobalt);outline-offset:2px}
         <button class="choice" id="l8" data-v="8"><b>8</b><span id="n8"></span></button>
         <button class="choice" id="l9" data-v="9"><b>9</b><span id="n9"></span></button>
         <button class="choice span" id="lx" data-v="x"><b>Extremo</b><span id="nx">10 a 13 letras, aleatório</span></button>
-        <button class="choice span" id="li" data-v="i"><b>Invisível</b><span id="ni">não sabe quantas letras tem; só quais letras existem</span></button>
+        <button class="choice span" id="li" data-v="i"><b>Invisível</b><span id="ni">não sabe quantas letras tem; só quais letras existem · dobro de tentativas</span></button>
       </div></div>
 
     <div class="opt"><h2>Dificuldade</h2>
@@ -245,7 +245,7 @@ button:focus-visible{outline:2px solid var(--cobalt);outline-offset:2px}
       <p>A palavra secreta é sorteada de todo o dicionário do tamanho escolhido, por isso pode ser rara. No modo Extremo, cada jogo tem de 10 a 13 letras, ao acaso.</p>
       <p>Acentos e ç são preenchidos sozinhos. As letras podem repetir-se.</p>
       <p>Na última tentativa aparece uma dica: uma letra da palavra, no lugar certo, numa casa que ainda não ficou verde. A dica não altera os pontos.</p>
-      <p>No modo Invisível não se sabe quantas letras tem a palavra (de 4 a 9). Escreva palavras de 4 a 13 letras: cada letra fica <b style="color:var(--ok)">verde</b> se está na mesma posição da palavra secreta, <b style="color:var(--near)">amarela</b> se existe noutro lugar e <b style="color:var(--off)">vermelha</b> se não existe. Na última tentativa, a dica é o número de letras.</p>
+      <p>No modo Invisível não se sabe quantas letras tem a palavra (de 4 a 9). Escreva palavras de 4 a 13 letras: cada letra fica <b style="color:var(--ok)">verde</b> se está na mesma posição da palavra secreta, <b style="color:var(--near)">amarela</b> se existe noutro lugar e <b style="color:var(--off)">vermelha</b> se não existe. Há o dobro de tentativas da dificuldade escolhida (8, 12 ou 20). Na última tentativa, a dica é o número de letras.</p>
       <h2>Pontuação</h2>
       <p>Cada palavra certa soma pontos à sua série. A série acaba quando falhar uma palavra, e o total conta para o recorde.</p>
       <table class="ptable"><tbody>
@@ -330,14 +330,16 @@ let RUN = store.get('az-run', {pts:0, words:0});
 function save(){ store.set('az-cur', S); store.set('az-run', RUN); }
 // Invisível: base do tamanho real da palavra com bónus de 50%
 const BASE = (len, inv) => inv ? Math.round(1.5*50*(len-2)) : 50*(len-2), MULT={10:1,6:2,4:3};
-function points(len, tries, used, inv){ return Math.round(BASE(len, inv)*MULT[tries]*(tries-used+1)/tries); }
+// No Invisível as tentativas são o dobro da dificuldade escolhida; difOf devolve a dificuldade base (4, 6 ou 10).
+const difOf = t => MULT[t] ? t : t/2;
+function points(len, tries, used, inv){ return Math.round(BASE(len, inv)*MULT[difOf(tries)]*(tries-used+1)/tries); }
 const isInv = () => !!S && S.modo==='invisivel';
 function getRec(){ return store.get('az-rec',{best:0,top:[]}); }
 
 /* ---------- home ---------- */
 function inProgress(){ return S && !S.done && S.guesses.length>0; }
 const sLen = s => s.modo==='extremo' ? 'x' : s.modo==='invisivel' ? 'i' : s.len;
-function differs(){ return S && (S.v!==prefs.v || sLen(S)!==prefs.len || S.tries!==prefs.tries); }
+function differs(){ return S && (S.v!==prefs.v || sLen(S)!==prefs.len || difOf(S.tries)!==prefs.tries); }
 let busy = false;
 function renderHome(){
   document.querySelectorAll('#optVar .choice').forEach(b=>b.setAttribute('aria-pressed', b.dataset.v===prefs.v));
@@ -347,16 +349,17 @@ function renderHome(){
   let tx=0; for(let n=XMIN;n<=XMAX;n++){ const c=count(n); if(c==null){ tx=null; break; } tx+=c; }
   $('nx').textContent = '10 a 13 letras, aleatório' + (tx==null ? '' : ' · '+fmt(tx)+' palavras');
   let ti=0; for(const n of LENS){ const c=count(n); if(c==null){ ti=null; break; } ti+=c; }
-  $('ni').textContent = 'não sabe quantas letras tem; só quais letras existem' + (ti==null ? '' : ' · '+fmt(ti)+' palavras');
+  $('ni').textContent = 'não sabe quantas letras tem; só quais letras existem · dobro de tentativas' + (ti==null ? '' : ' · '+fmt(ti)+' palavras');
   const st=store.get('az-stats',{played:0,won:0,streak:0,best:0});
   $('homeStats').innerHTML = statsHTML(st);
   const cont = S && !S.done && !differs();
   $('play').disabled = busy;
   $('play').textContent = busy ? 'Carregando dicionário…' : cont ? 'Continuar jogo' : (RUN.words ? 'Próxima palavra' : 'Jogar');
   $('warn').hidden = !(inProgress() && differs());
-  const u = Math.max(1, Math.round(prefs.tries/3));
+  const T = prefs.len==='i' ? prefs.tries*2 : prefs.tries;
+  const u = Math.max(1, Math.round(T/3));
   const pts = used => prefs.len==='x' ? `de ${fmt(points(XMIN,prefs.tries,used))} a ${fmt(points(XMAX,prefs.tries,used))} pontos`
-    : prefs.len==='i' ? `de ${fmt(points(LENS[0],prefs.tries,used,true))} a ${fmt(points(LENS[LENS.length-1],prefs.tries,used,true))} pontos`
+    : prefs.len==='i' ? `de ${fmt(points(LENS[0],T,used,true))} a ${fmt(points(LENS[LENS.length-1],T,used,true))} pontos`
     : `${fmt(points(prefs.len,prefs.tries,used))} pontos`;
   const varia = prefs.len==='x'||prefs.len==='i';
   $('example').innerHTML = `Com as opções escolhidas, acertar à ${u}.ª tentativa vale <b>${pts(u)}</b>; à 1.ª vale ${pts(1)}${varia?', conforme o tamanho da palavra':''}.`;
@@ -425,7 +428,7 @@ async function newGame(){
   store.set('az-last',[secret,...last].slice(0,60));
   const key = norm(secret);
   if(prefs.v==='br' && DICT[L].br.get(key)) secret = DICT[L].br.get(key);
-  S = {v:prefs.v, len:L, tries:prefs.tries, secret, key, guesses:[], cur:modo==='invisivel' ? [] : Array(L).fill(''), pos:0, done:false, won:false};
+  S = {v:prefs.v, len:L, tries:modo==='invisivel' ? prefs.tries*2 : prefs.tries, secret, key, guesses:[], cur:modo==='invisivel' ? [] : Array(L).fill(''), pos:0, done:false, won:false};
   if(modo) S.modo = modo;
   invWait = null;
   lastEnd=null; save();
@@ -448,7 +451,7 @@ function render(flipRow=-1){
   b.classList.toggle('inv', isInv());
   if(isInv()) renderInv(b, flipRow); else renderGrid(b, flipRow);
   const inv=isInv();
-  $('info').innerHTML = inv ? `<b>Invisível</b> · ${LBL[S.tries]} · ${VLBL[S.v]}` : `<b>${S.modo==='extremo'?'Extremo · ':''}${S.len} letras</b> · ${LBL[S.tries]} · ${VLBL[S.v]}`;
+  $('info').innerHTML = inv ? `<b>Invisível</b> · ${LBL[difOf(S.tries)]} · ${S.tries} tentativas · ${VLBL[S.v]}` : `<b>${S.modo==='extremo'?'Extremo · ':''}${S.len} letras</b> · ${LBL[S.tries]} · ${VLBL[S.v]}`;
   $('hint').textContent = inv ? 'O tamanho é segredo: escreva palavras de 4 a 13 letras.' : 'Toque numa casa para escrever nessa posição.';
   const lg = inv ? 'inv' : 'std';
   if($('legend').dataset.m!==lg){ $('legend').dataset.m=lg; $('legend').innerHTML = inv
@@ -646,7 +649,7 @@ function finish(row, won){
     if(S.won){
       const inv=isInv(), used=S.guesses.length, gain=points(S.len,S.tries,used,inv);
       RUN.pts+=gain; RUN.words++;
-      lastEnd={gain, calc:`${BASE(S.len,inv)} (${S.len} letras${inv?', Invisível +50%':''}) × ${MULT[S.tries]} (${LBL[S.tries]}) × ${S.tries-used+1}/${S.tries} (tentativas)`};
+      lastEnd={gain, calc:`${BASE(S.len,inv)} (${S.len} letras${inv?', Invisível +50%':''}) × ${MULT[difOf(S.tries)]} (${LBL[difOf(S.tries)]}) × ${S.tries-used+1}/${S.tries} (tentativas)`};
     } else lastEnd=endRun();
   }
   save();
